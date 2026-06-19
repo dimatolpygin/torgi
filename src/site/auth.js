@@ -26,7 +26,15 @@ export async function restoreSession(cookies) {
   for (const [k, v] of Object.entries(cookies || {})) client.cookies.set(k, v);
   const acc = await client.get(ACCOUNT_PATH, { followRedirect: true });
   const loggedIn = isLoggedIn(acc.text);
-  const fio = loggedIn ? extractFio(acc.text) : null;
+  let fio = null;
+  if (loggedIn) {
+    // ФИО надёжнее всего на форме подачи (метка «ФИО:»), как и при обычном входе.
+    fio = extractFio(acc.text);
+    if (!fio) {
+      const reg = await client.get(REG_PATH, { followRedirect: true });
+      fio = extractFio(reg.text);
+    }
+  }
   return { client, loggedIn, fio };
 }
 
