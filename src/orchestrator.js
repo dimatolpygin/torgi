@@ -1,3 +1,4 @@
+import { DateTime } from 'luxon';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getAccounts } from './accounts.js';
@@ -40,12 +41,15 @@ async function runForContext(ctx, notifier) {
 export async function runNightly(
   notifier,
   accounts = getAccounts(),
-  { tz = config.timing.timezone, leadSeconds = config.timing.prepareLeadSeconds } = {},
+  { tz = config.timing.timezone, leadSeconds = config.timing.prepareLeadSeconds, targetMs: targetOverride } = {},
 ) {
-  const target = nextRegistrationMidnight(tz);
-  const targetMs = target.toMillis();
+  // targetOverride — подставная целевая минута для E2E-прогона (этап 10).
+  const target = targetOverride
+    ? DateTime.fromMillis(targetOverride).setZone(tz)
+    : nextRegistrationMidnight(tz);
+  const targetMs = targetOverride || target.toMillis();
   logger.info(
-    `Следующая подача: ${target.setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm:ss')} (${tz}), аккаунтов: ${accounts.length}`,
+    `${targetOverride ? 'E2E-прогон' : 'Следующая подача'}: ${target.setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm:ss')} (${tz}), аккаунтов: ${accounts.length}`,
   );
 
   // Прогрев за leadSeconds до полуночи (изолированные сессии).
