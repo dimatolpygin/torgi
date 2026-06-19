@@ -9,6 +9,10 @@ export const redis = new Redis({
   maxRetriesPerRequest: 3,
 });
 
+// Без обработчика ioredis сыплет необработанными ошибками в лог при недоступном
+// Redis (локальный UAT). Вызывающий код сам решает, фатально это или фолбэк.
+redis.on('error', (e) => logger.debug(`Redis: ${e.message}`));
+
 // Проверка подключения к Redis.
 export async function checkRedis() {
   if (redis.status !== 'ready' && redis.status !== 'connecting') {

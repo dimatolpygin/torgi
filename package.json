@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "check:auth": "node src/scripts/check-auth.js"
+    "check:auth": "node src/scripts/check-auth.js",
+    "check:telegram": "node src/scripts/check-telegram.js"
   },
   "engines": {
     "node": ">=20"

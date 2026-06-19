@@ -2,10 +2,17 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { checkPostgres, pool } from './db.js';
 import { checkRedis, redis } from './redis.js';
+import { getAccounts } from './accounts.js';
+import { createNotifier } from './notify.js';
+import { startScheduler } from './orchestrator.js';
+import { nextRegistrationMidnight } from './scheduler.js';
 
 async function main() {
+  const startedAt = Date.now();
   logger.info('🚀 bron-bot запускается…');
-  logger.info(`Рынок: id=${config.site.rinokId}, ассортимент: [${config.site.assortIds.join(', ')}], таймзона: ${config.timing.timezone}, dry-run: ${config.timing.dryRun}`);
+  logger.info(
+    `Рынок: id=${config.site.rinokId}, ассортимент: [${config.site.assortIds.join(', ')}], таймзона: ${config.timing.timezone}, dry-run: ${config.timing.dryRun}`,
+  );
 
   // Этап 0: проверяем, что инфраструктура поднята и доступна.
   try {
@@ -16,11 +23,34 @@ async function main() {
     process.exit(1);
   }
 
-  logger.info('✅ Каркас жив, инфраструктура на связи. Ожидание следующих этапов.');
+  const accounts = getAccounts();
+  const nextRunStr = () =>
+    nextRegistrationMidnight().setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm');
 
-  // Держим процесс живым (на следующих этапах здесь будет планировщик).
+  // Этап 7: Telegram-бот — уведомления, состояние сервера, алерты.
+  const notifier = createNotifier({
+    statusProvider: () => ({
+      uptimeMs: Date.now() - startedAt,
+      nextRun: nextRunStr(),
+      accounts: accounts.length,
+      dryRun: config.timing.dryRun,
+    }),
+  });
+  notifier.launch();
+  await notifier
+    .notify(
+      'bron-bot запущен на сервере\n' +
+        `следующая подача: ${nextRunStr()}\n` +
+        `режим: ${config.timing.dryRun ? 'dry-run (тест)' : 'боевой'} · аккаунтов: ${accounts.length}`,
+    )
+    .catch(() => {});
+
+  logger.info('✅ Каркас жив, Telegram подключён. Планировщик ночной подачи активен.');
+
   const shutdown = async (signal) => {
     logger.info(`Получен ${signal}, завершаюсь…`);
+    await notifier.notify('bron-bot остановлен на сервере').catch(() => {});
+    notifier.stop(signal);
     await pool.end().catch(() => {});
     await redis.quit().catch(() => {});
     process.exit(0);
@@ -28,10 +58,8 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // heartbeat, чтобы было видно, что сервис жив
-  setInterval(() => {
-    logger.debug('heartbeat: жив');
-  }, 60_000);
+  // Вечный цикл ночных прогонов.
+  await startScheduler(notifier);
 }
 
 main().catch((err) => {
