@@ -26,9 +26,17 @@
 
 - Логин: POST `/rinki/minsk/login/`, поля `n_login`, `n_pass`. Сессия — кука `gorodid`.
 - Капчи/CSRF/WAF нет. Сервер — Apache, госЦОД Мингорисполкома (IP 87.252.228.216).
-- Форма подачи: POST `/rinki/minsk/reg/fiz/` — `reg=1`, `rinok=10` (Комаровский),
-  `type_mesta` (дефолт, не трогаем), `arr_date` (появляется в 00:00), `assort_arr[]=2` (овощи).
-- При выборе рынка — AJAX `type_mest/`, `limit_mest/`, `calend/`.
+- При выборе рынка — AJAX (логика в `js/rinki/rinki.reg.js`):
+  - `type_mest/` POST `{RINOK}` → `{KVO_TORG_MASH, KVO_TORG_MEST}` (1=машино-место, 2=торговый ряд).
+    На Комаровском дефолт = «Торговый ряд» (value=2) — его и не трогаем.
+  - `limit_mest/` POST `{RINOK, TYPE_PERSON}` → `{REZERV_LIMIT}` (на Комаровском = 2).
+  - `calend/` POST `{f_reg:1, ID_RINKA, TYPE_MEST, DATA_YEAR, DATA_MONTH, DATA_DAY}` → `{answer: html}`.
+    Доступный день = кликабельный `<a class="day" day="N">`.
+- **Реальная подача — НЕ на reg/fiz, а POST `create_zajav/`** с полями:
+  `PERSN` (JSON {n_persn,fam,name,otc}), `rinok`, `type_mesta`, `arr_date` (JSON {0:"день"}),
+  `month`, `year`, `t_contakt`, `n_mail`, `pass`, `pass_sub`, `ARR_ASSORT` (JSON {0:"2"}=овощи),
+  `type_person=fiz`, `is_login=1`, `f_sogl`. Ответ: code 201 = принято (залогинен),
+  200 = принято+создан ЛК, 500 = ошибки валидации, 501 = пароль неверный.
 - Подтверждение успеха — таблица «Для Вас забронированы следующие места» в `account/`.
 - В 00:00 открывается одна новая дата (неделя вперёд). По понедельникам регистрации нет.
 - Лимит 2 заявки/сутки: бот подаёт 1-ю, клиент вручную 2-ю (подстраховка).
