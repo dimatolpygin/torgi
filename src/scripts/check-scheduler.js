@@ -30,7 +30,7 @@ async function main() {
   logger.info(notMonday ? 'Понедельник пропущен ✅' : 'Попал на понедельник ❌');
   allOk = allOk && notMonday;
 
-  // --- Тест 3: режим долбёжки ---
+  // --- Тест 3: режим долбёжки до успеха ---
   logger.info('--- Тест 3: долбёжка до успеха ---');
   let n = 0;
   const res = await retryUntil(
@@ -38,13 +38,49 @@ async function main() {
       n = attempt;
       return { success: attempt >= 3 }; // успех на 3-й попытке
     },
-    { windowMs: 5000, intervalMs: 100 },
+    { windowMs: 5000, fastIntervalMs: 30, slowIntervalMs: 30, jitterFrac: 0, maxPerMinute: 1000 },
   );
   const retried = res.success && n === 3;
   logger.info(`Успех на попытке ${n} — ${retried ? '✅' : '❌'}`);
   allOk = allOk && retried;
 
-  logger.info(allOk ? '✅ Этап 5: тайминг точный, понедельник пропускается, долбёжка работает' : '❌ Этап 5: есть проблемы');
+  // --- Тест 4: потолок запросов в минуту ---
+  logger.info('--- Тест 4: потолок запросов (maxPerMinute) ---');
+  let calls = 0;
+  const t4start = Date.now();
+  await retryUntil(
+    async () => {
+      calls++;
+      return { success: false };
+    },
+    { windowMs: 1500, fastIntervalMs: 1, slowIntervalMs: 1, jitterFrac: 0, maxPerMinute: 5 },
+  );
+  // за 1.5с с потолком 5/мин не должно успеть больше ~6 запросов
+  const capped = calls <= 6;
+  logger.info(`Запросов за ${Date.now() - t4start}мс: ${calls} (потолок 5/мин) — ${capped ? '✅' : '❌'}`);
+  allOk = allOk && capped;
+
+  // --- Тест 5: тревога о возможной блокировке ---
+  logger.info('--- Тест 5: детект блокировки при серии ошибок ---');
+  let blockAlert = false;
+  await retryUntil(
+    async () => {
+      throw new Error('ECONNRESET'); // имитация сетевой ошибки
+    },
+    {
+      windowMs: 800,
+      fastIntervalMs: 30,
+      slowIntervalMs: 30,
+      jitterFrac: 0,
+      maxPerMinute: 1000,
+      blockStreak: 3,
+      onPossibleBlock: () => { blockAlert = true; },
+    },
+  );
+  logger.info(`Тревога о блокировке вызвана: ${blockAlert ? 'да ✅' : 'нет ❌'}`);
+  allOk = allOk && blockAlert;
+
+  logger.info(allOk ? '✅ Этап 5: тайминг точный, понедельник пропускается, долбёжка безопасна' : '❌ Этап 5: есть проблемы');
   process.exit(allOk ? 0 : 1);
 }
 

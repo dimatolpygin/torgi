@@ -20,6 +20,19 @@ export const config = {
     dryRun: process.env.DRY_RUN !== 'false',
   },
 
+  // Режим долбёжки (опрос при сбоях, когда места открываются не в 00:00).
+  // Намеренно консервативно: интервалы как у живого пользователя, чтобы не
+  // спровоцировать блокировку нашего единственного IP (fail2ban/mod_evasive).
+  retry: {
+    windowMs: Number(process.env.RETRY_WINDOW_MS || 4 * 3600_000), // окно 4 часа
+    fastIntervalMs: Number(process.env.RETRY_FAST_MS || 4000), // первые минуты — чаще
+    fastPhaseMs: Number(process.env.RETRY_FAST_PHASE_MS || 120_000), // длительность «частой» фазы
+    slowIntervalMs: Number(process.env.RETRY_SLOW_MS || 20_000), // дальше — реже
+    jitterFrac: Number(process.env.RETRY_JITTER || 0.3), // ±30% случайности
+    maxPerMinute: Number(process.env.RETRY_MAX_PER_MIN || 15), // жёсткий потолок
+    blockStreak: Number(process.env.RETRY_BLOCK_STREAK || 5), // подряд ошибок = тревога
+  },
+
   // Postgres
   pg: {
     host: process.env.PGHOST || 'postgres',
