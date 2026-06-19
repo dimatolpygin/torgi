@@ -1,6 +1,6 @@
 {
   "name": "bron-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Автоматическая бронь торгового места на gorod.it-minsk.by (Минский Комаровский рынок)",
   "type": "module",
   "main": "src/index.js",

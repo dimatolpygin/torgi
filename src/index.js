@@ -7,9 +7,11 @@ import { createNotifier } from './notify.js';
 import { startScheduler } from './orchestrator.js';
 import { nextRegistrationMidnight } from './scheduler.js';
 
+const VERSION = '0.2.0';
+
 async function main() {
   const startedAt = Date.now();
-  logger.info('🚀 bron-bot запускается…');
+  logger.info(`🚀 bron-bot v${VERSION} запускается…`);
   logger.info(
     `Рынок: id=${config.site.rinokId}, ассортимент: [${config.site.assortIds.join(', ')}], таймзона: ${config.timing.timezone}, dry-run: ${config.timing.dryRun}`,
   );
