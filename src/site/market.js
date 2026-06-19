@@ -40,7 +40,11 @@ export async function getLimit(client, rinokId, typePerson = 'fiz') {
 }
 
 // Календарь: какие дни доступны для записи.
-// Доступный день в html — кликабельный <a class="day" day="N">.
+// Разметка сайта (выяснено из rinki.reg.js + сырого ответа calend/):
+//   обычный день  — <td class="coolday">N</td> (не кликабелен)
+//   доступный день — <td class="coolday ic_day">N</td> (по JS click-обработчик на .ic_day)
+// При выборе дню ставится id="currdate", а при submit arr_date = текст всех #currdate.
+// Месяц/год — выбранный <option> внутри <select name="month"/"year">.
 export async function getCalendar(client, rinokId, typeMest = '', { year = '', month = '', day = '' } = {}) {
   const r = await postJson(client, 'calend/', {
     DATA_YEAR: year,
@@ -51,13 +55,14 @@ export async function getCalendar(client, rinokId, typeMest = '', { year = '', m
     TYPE_MEST: typeMest,
   });
   const html = r.answer || r._raw || '';
-  const days = [...html.matchAll(/<a[^>]*class=["']day["'][^>]*day=["'](\d+)["']/gi)].map((m) => Number(m[1]));
-  // месяц/год календаря — из скрытых select/inputs в ответе
-  const ym = html.match(/name=["']month["'][^>]*value=["'](\d+)["']/i);
-  const yy = html.match(/name=["']year["'][^>]*value=["'](\d+)["']/i);
+  const days = [
+    ...html.matchAll(/<td[^>]*class="[^"]*\bic_day\b[^"]*"[^>]*>\s*(\d+)\s*<\/td>/gi),
+  ].map((m) => Number(m[1]));
+  const mm = html.match(/name=["']month["'][\s\S]*?<option[^>]*value=["'](\d+)["'][^>]*selected/i);
+  const yy = html.match(/name=["']year["'][\s\S]*?<option[^>]*value=["'](\d+)["'][^>]*selected/i);
   return {
     availableDays: days,
-    month: ym ? Number(ym[1]) : null,
+    month: mm ? Number(mm[1]) : null,
     year: yy ? Number(yy[1]) : null,
     rawHtml: html,
   };
