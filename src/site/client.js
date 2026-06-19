@@ -10,6 +10,9 @@ export class SiteClient {
     this.client = new Client(this.origin, {
       keepAliveTimeout: 600_000,
       keepAliveMaxTimeout: 600_000,
+      connect: { timeout: 30_000 },
+      headersTimeout: 30_000,
+      bodyTimeout: 30_000,
     });
     this.cookies = new Map();
   }
