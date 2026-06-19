@@ -19,6 +19,17 @@ function extractFio(html) {
   return m ? m[1].trim().replace(/\s+/g, ' ') : null;
 }
 
+// Восстановить сессию из сохранённых кук без логина. Возвращает
+// { client, loggedIn, fio }. Если кука устарела — loggedIn=false.
+export async function restoreSession(cookies) {
+  const client = new SiteClient();
+  for (const [k, v] of Object.entries(cookies || {})) client.cookies.set(k, v);
+  const acc = await client.get(ACCOUNT_PATH, { followRedirect: true });
+  const loggedIn = isLoggedIn(acc.text);
+  const fio = loggedIn ? extractFio(acc.text) : null;
+  return { client, loggedIn, fio };
+}
+
 // Логин на сайт. Возвращает { client, loggedIn, fio }.
 // При успехе client несёт активную сессию (куку gorodid) для дальнейших запросов.
 export async function login(loginName, password) {

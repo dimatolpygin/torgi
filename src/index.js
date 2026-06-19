@@ -1,6 +1,6 @@
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { checkPostgres, pool } from './db.js';
+import { checkPostgres, ensureSchema, pool } from './db.js';
 import { checkRedis, redis } from './redis.js';
 import { getAccounts } from './accounts.js';
 import { createNotifier } from './notify.js';
@@ -17,6 +17,7 @@ async function main() {
   // Этап 0: проверяем, что инфраструктура поднята и доступна.
   try {
     await checkPostgres();
+    await ensureSchema();
     await checkRedis();
   } catch (err) {
     logger.error(`❌ Ошибка подключения к инфраструктуре: ${err.message}`);

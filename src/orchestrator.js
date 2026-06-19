@@ -2,6 +2,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { getAccounts } from './accounts.js';
 import { prepareAll, attemptForAccount, closeAll } from './runner.js';
+import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
@@ -53,11 +54,30 @@ export async function runNightly(
   const contexts = await prepareAll(accounts);
 
   // Точный выстрел в 00:00:00.000, параллельно по всем аккаунтам.
-  const { result: results } = await fireAt(targetMs, () =>
+  const { drift, result: results } = await fireAt(targetMs, () =>
     Promise.all(contexts.map((ctx) => runForContext(ctx, notifier))),
   );
 
   const date = results.find((x) => x.date)?.date;
+
+  // История: пишем каждую попытку в Postgres (этап 8). Сбой записи не должен
+  // ронять прогон — логируем и идём дальше.
+  await Promise.all(
+    results.map((r) =>
+      recordAttempt({
+        login: r.tag,
+        fio: r.fio,
+        targetDate: r.date || date || null,
+        success: r.success,
+        reason: r.reason || null,
+        dryRun: config.timing.dryRun,
+        driftMs: drift,
+        market: r.booking?.market || null,
+        detail: { reason: r.reason, dryRun: r.dryRun, alreadyDone: r.alreadyDone, response: r.response },
+      }).catch((e) => logger.warn(`Не записал попытку ${r.tag} в БД: ${e.message}`)),
+    ),
+  );
+
   await notifier.notifyRunResult(results, { date });
   await closeAll(contexts);
   return results;

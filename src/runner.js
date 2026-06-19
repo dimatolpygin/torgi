@@ -1,8 +1,9 @@
 import { DateTime } from 'luxon';
-import { login } from './site/auth.js';
+import { login, restoreSession } from './site/auth.js';
 import { readMarketState } from './site/market.js';
 import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
 import { verifyBooking } from './site/bookings.js';
+import { loadSession, saveSession, markDone, isDone } from './session.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -12,11 +13,29 @@ function alog(tag, msg, level = 'info') {
 }
 
 // Подготовка аккаунта: вход и создание изолированной сессии (свой SiteClient).
+// Сначала пробуем восстановить сессию из Redis (без лишнего логина); если кука
+// устарела или её нет — обычный вход, и свежую куку сохраняем в Redis.
 export async function prepareAccount(account) {
   const tag = account.login;
+
+  const saved = await loadSession(tag);
+  if (saved) {
+    const r = await restoreSession(saved);
+    if (r.loggedIn) {
+      alog(tag, `сессия восстановлена из Redis (${r.fio || tag}) — логин не потребовался`);
+      return { account, tag, client: r.client, loggedIn: true, fio: r.fio, restored: true };
+    }
+    await r.client.close().catch(() => {});
+    alog(tag, 'сохранённая сессия устарела — выполняю вход', 'warn');
+  }
+
   const { client, loggedIn, fio } = await login(account.login, account.password);
-  if (loggedIn) alog(tag, `сессия готова (${fio || tag})`);
-  else alog(tag, 'вход не удался', 'warn');
+  if (loggedIn) {
+    await saveSession(tag, client.cookies);
+    alog(tag, `сессия готова (${fio || tag}), кука сохранена в Redis`);
+  } else {
+    alog(tag, 'вход не удался', 'warn');
+  }
   return { account, tag, client, loggedIn, fio };
 }
 
@@ -42,6 +61,15 @@ export async function attemptForAccount(ctx, attempt = 1) {
 
   const day = state.availableDays[0];
   const dateStr = buildDateStr(day, state.month, state.year);
+
+  // Защита от двойной подачи: на повторных попытках (долбёжка/рестарт) проверяем,
+  // не подавали ли уже на эту дату. Первый выстрел в 00:00 не тормозим лишним
+  // запросом в Redis — скорость важнее.
+  if (attempt > 1 && (await isDone(tag, dateStr))) {
+    alog(tag, `на ${dateStr} уже подано ранее — повтор пропущен`);
+    return { tag, success: true, date: dateStr, alreadyDone: true };
+  }
+
   const fields = await getRegFields(client);
   const payload = buildCreateZajavPayload({
     fields,
@@ -66,6 +94,7 @@ export async function attemptForAccount(ctx, attempt = 1) {
   // Верификация по факту в ЛК
   const found = await verifyBooking(client, { date: dateStr });
   if (found) {
+    await markDone(tag, dateStr);
     alog(tag, `✅ заявка подтверждена в ЛК: ${found.date}, ${found.market}`);
     return { tag, success: true, date: dateStr, booking: found };
   }
