@@ -73,7 +73,7 @@ export function createNotifier({ statusProvider } = {}) {
     await Promise.all(
       ids.map((id) =>
         bot.telegram
-          .sendMessage(id, text)
+          .sendMessage(id, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
           .catch((e) => logger.warn(`Не отправлено в чат ${id}: ${e.message}`)),
       ),
     );
@@ -105,13 +105,13 @@ export function createNotifier({ statusProvider } = {}) {
     await addSubscriber(ctx.chat.id);
     const u = ctx.from;
     logger.info(`👤 @${u?.username || '—'} (id:${u?.id}, ${u?.first_name}) → /start`);
-    await ctx.reply(startReply());
+    await ctx.reply(startReply(), { parse_mode: 'HTML' });
   });
 
   // /status — состояние сервера/бота.
   bot.command('status', async (ctx) => {
     logger.info(`👤 @${ctx.from?.username || '—'} (id:${ctx.from?.id}) → /status`);
-    await ctx.reply(await formatStatus());
+    await ctx.reply(await formatStatus(), { parse_mode: 'HTML' });
   });
 
   async function formatStatus() {

@@ -1,10 +1,16 @@
 // Все пользовательские тексты Telegram-бота в одном месте (этап 13).
-// Стиль: единый, со смайлами к месту, формулировки однозначны (в т.ч. чёткое
-// отличие тест-режима от боевого). Plain text — без parse_mode, спецсимволы не нужны.
+// Стиль: минимум смайлов (только функциональные статус-индикаторы 🟢/🔴/🟡),
+// форматирование через HTML (parse_mode: 'HTML'): <b>, <i>, <u>, <code>.
+// Подставляемые значения экранируем esc() — Telegram HTML требует &<> экранировать.
 import { DateTime } from 'luxon';
 import { config } from './config.js';
 
 const ASSORT_LABELS = { 1: 'картофель', 2: 'овощи', 3: 'зелень', 4: 'плоды', 5: 'ягоды', 6: 'яблоки' };
+
+// Экранирование для Telegram HTML.
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 function assortText() {
   return config.site.assortIds.map((id) => ASSORT_LABELS[id] || `ассортимент ${id}`).join(', ');
@@ -26,7 +32,104 @@ export function bookingDateShort(dateStr) {
 }
 
 function modeLabel(dryRun) {
-  return dryRun ? '🧪 тест (заявки на сайт не отправляются)' : '🔥 рабочий (заявки отправляются на сайт)';
+  return dryRun
+    ? '<i>тест</i> (заявки на сайт не отправляются)'
+    : '<b>рабочий</b> (заявки отправляются на сайт)';
+}
+
+// Ответ на /start — подписка чата на уведомления.
+export function startReply() {
+  return [
+    '<b>bron-bot на связи</b>',
+    '',
+    'Этот чат подписан на уведомления о ночной брони торгового места.',
+    'Каждую ночь после 00:00 пришлю результат подачи.',
+    '',
+    'Команда /status — состояние бота и время следующей подачи.',
+  ].join('\n');
+}
+
+// Уведомление при запуске бота на сервере.
+export function startedNotice({ nextRun, dryRun, accounts }) {
+  return [
+    '<b>bron-bot запущен</b>',
+    '',
+    `Следующая подача: <code>${esc(nextRun)}</code>`,
+    `Режим: ${modeLabel(dryRun)}`,
+    `Кабинетов: ${accounts}`,
+  ].join('\n');
+}
+
+// Уведомление при остановке бота.
+export function stoppedNotice() {
+  return '<b>bron-bot остановлен.</b> Уведомления приостановлены.';
+}
+
+// Ответ на /status — состояние бота.
+export function statusText({ uptimeMs, nextRun, accounts, dryRun, lastRun } = {}) {
+  const lines = ['<b>bron-bot · состояние</b>', ''];
+  if (uptimeMs != null) lines.push(`Бот работает: ${humanDuration(uptimeMs)} без перерыва`);
+  if (nextRun) lines.push(`Следующая подача: <code>${esc(nextRun)}</code>`);
+  if (accounts != null) lines.push(`Кабинетов: ${accounts}`);
+  lines.push(`Режим: ${modeLabel(dryRun)}`);
+  lines.push(`Последняя подача: ${lastRun ? esc(lastRun.title) : 'ещё не было'}`);
+  return lines.join('\n');
+}
+
+// Исход подачи по одному аккаунту (одна строка). Статус-индикатор — единственный смайл.
+export function outcomeText(r) {
+  if (r.success && r.dryRun) {
+    return '<i>тест — заявка корректно собрана (в рабочем режиме ушла бы на сайт)</i>';
+  }
+  if (r.success) return '🟢 место забронировано';
+  const reasons = {
+    no_date: '🔴 свободных дат не было',
+    rejected: '🔴 сайт отклонил заявку',
+    not_verified: '🟡 заявка отправлена, но не подтвердилась в личном кабинете',
+    not_logged_in: '🔴 не удалось войти в кабинет',
+    error: '🔴 сетевая ошибка при подаче',
+  };
+  return reasons[r.reason] || `🔴 ${esc(r.reason || 'неизвестная причина')}`;
+}
+
+// Итог ночной подачи по всем аккаунтам.
+export function runResultText(results, { dryRun = false, date } = {}) {
+  const okCount = results.filter((r) => r.success).length;
+  const lines = [`<b>Итог ночной подачи</b>${dryRun ? ' <i>(тест)</i>' : ''}`];
+  if (date) lines.push(`Дата брони: <code>${esc(bookingDateLong(date))}</code>`);
+  lines.push(`Ассортимент: ${esc(assortText())} · Рынок: ${esc(config.site.marketName)}`);
+  lines.push('');
+  for (const r of results) {
+    lines.push(`<b>${esc(r.fio || r.tag)}</b>`);
+    lines.push(outcomeText(r));
+  }
+  lines.push('');
+  if (okCount < results.length) {
+    lines.push('<b>Часть заявок не прошла.</b> <u>Подайте вручную.</u>');
+  } else if (dryRun) {
+    lines.push('<i>Тест-режим: реальные заявки не отправлялись.</i>');
+  } else {
+    lines.push('<b>Готово: все места взяты.</b>');
+  }
+  return lines.join('\n');
+}
+
+// Заметный префикс для тревожных сообщений.
+export function alertText(body) {
+  return `<b>⚠ ВНИМАНИЕ</b>\n${body}`;
+}
+
+// Тело алерта о возможной блокировке IP (серия ошибок на подаче).
+export function blockAlertBody({ account, streak }) {
+  return (
+    `Кабинет <b>${esc(account)}</b>: ${streak} ошибок подряд при подаче — возможна блокировка IP.\n` +
+    '<u>Проверьте доступ к сайту и при необходимости подайте вручную.</u>'
+  );
+}
+
+// Тело алерта о сбое ночного прогона.
+export function runFailureBody(message) {
+  return `Сбой ночного прогона: <code>${esc(message)}</code>\nБот продолжит работу и попробует в следующую ночь.`;
 }
 
 function humanDuration(ms) {
@@ -34,101 +137,4 @@ function humanDuration(ms) {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return h > 0 ? `${h} ч ${m} мин` : `${m} мин`;
-}
-
-// Ответ на /start — подписка чата на уведомления.
-export function startReply() {
-  return [
-    '✅ bron-bot на связи!',
-    '',
-    'Этот чат подписан на уведомления о ночной брони торгового места.',
-    'Каждую ночь после 00:00 пришлю результат: 🟢 место взято или 🔴 не вышло.',
-    '',
-    '📋 /status — состояние бота и время следующей подачи.',
-  ].join('\n');
-}
-
-// Уведомление при запуске бота на сервере.
-export function startedNotice({ nextRun, dryRun, accounts }) {
-  return [
-    '🚀 bron-bot запущен на сервере.',
-    '',
-    `🗓 следующая подача: ${nextRun}`,
-    `⚙️ режим: ${modeLabel(dryRun)}`,
-    `👥 кабинетов: ${accounts}`,
-  ].join('\n');
-}
-
-// Уведомление при остановке бота.
-export function stoppedNotice() {
-  return '🛑 bron-bot остановлен на сервере. Уведомления приостановлены.';
-}
-
-// Ответ на /status — состояние бота.
-export function statusText({ uptimeMs, nextRun, accounts, dryRun, lastRun } = {}) {
-  const lines = ['🤖 bron-bot · состояние', ''];
-  if (uptimeMs != null) lines.push(`🟢 бот работает: ${humanDuration(uptimeMs)} без перерыва`);
-  if (nextRun) lines.push(`🗓 следующая подача: ${nextRun}`);
-  if (accounts != null) lines.push(`👥 кабинетов: ${accounts}`);
-  lines.push(`⚙️ режим: ${modeLabel(dryRun)}`);
-  lines.push(`📨 последняя подача: ${lastRun ? lastRun.title : 'ещё не было'}`);
-  return lines.join('\n');
-}
-
-// Исход подачи по одному аккаунту (одна строка).
-export function outcomeText(r) {
-  if (r.success && r.dryRun) {
-    return '🧪 тест — заявка корректно собрана (в боевом режиме ушла бы на сайт)';
-  }
-  if (r.success) {
-    return '🟢 место забронировано';
-  }
-  const reasons = {
-    no_date: '🔴 свободных дат не было',
-    rejected: '🔴 сайт отклонил заявку',
-    not_verified: '🟡 заявка отправлена, но не подтвердилась в личном кабинете',
-    not_logged_in: '🔴 не удалось войти в аккаунт',
-    error: '🔴 сетевая ошибка при подаче',
-  };
-  return reasons[r.reason] || `🔴 ${r.reason || 'неизвестная причина'}`;
-}
-
-// Итог ночной подачи по всем аккаунтам.
-export function runResultText(results, { dryRun = false, date } = {}) {
-  const okCount = results.filter((r) => r.success).length;
-  const lines = [`🌙 bron-bot · итог ночной подачи${dryRun ? ' · 🧪 тест' : ''}`];
-  if (date) lines.push(`🗓 дата брони: ${bookingDateLong(date)}`);
-  lines.push(`🥬 ${assortText()} · 🏪 ${config.site.marketName}`);
-  lines.push('');
-  for (const r of results) {
-    lines.push(`👤 ${r.fio || r.tag}`);
-    lines.push(`   ${outcomeText(r)}`);
-  }
-  lines.push('');
-  if (okCount < results.length) {
-    lines.push('⚠️ Часть заявок не прошла — подайте вручную!');
-  } else if (dryRun) {
-    lines.push('🧪 Тест-режим: реальные заявки не отправлялись.');
-  } else {
-    lines.push('✅ Готово: все места взяты.');
-  }
-  return lines.join('\n');
-}
-
-// Заметный префикс для тревожных сообщений.
-export function alertText(body) {
-  return `🚨 ВНИМАНИЕ!\n${body}`;
-}
-
-// Тело алерта о возможной блокировке IP (серия ошибок на подаче).
-export function blockAlertBody({ account, streak }) {
-  return (
-    `Аккаунт ${account}: ${streak} ошибок подряд при подаче — возможна блокировка IP.\n` +
-    'Проверьте доступ к сайту и при необходимости подайте вручную.'
-  );
-}
-
-// Тело алерта о сбое ночного прогона.
-export function runFailureBody(message) {
-  return `Сбой ночного прогона: ${message}\nБот продолжит работу и попробует в следующую ночь.`;
 }

@@ -16,9 +16,13 @@ import {
 } from '../messages.js';
 
 const sep = (title) => `\n${'─'.repeat(60)}\n  ${title}\n${'─'.repeat(60)}`;
+// В консоли убираем HTML-теги (в Telegram они отрисуются как форматирование),
+// &-сущности возвращаем обратно — чтобы видеть текст глазами клиента.
+const strip = (t) =>
+  t.replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 const show = (title, text) => {
   console.log(sep(title));
-  console.log(text);
+  console.log(strip(text));
 };
 
 const fio1 = 'Иванов Александр Эдуардович';
