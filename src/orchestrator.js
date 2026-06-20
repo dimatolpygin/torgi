@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getAccounts } from './accounts.js';
-import { prepareAll, attemptForAccount, closeAll, buildDateStr } from './runner.js';
+import { prepareAll, attemptForAccount, closeAll, buildDateStr, warmConnection } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
 import { blockAlertBody, runFailureBody } from './messages.js';
@@ -71,6 +71,16 @@ export async function runNightly(
   contexts.forEach((ctx) => {
     ctx.targetMs = targetMs;
   });
+
+  // Тёплое соединение за warmAheadMs до полуночи (этап 14): «оживляем» сокет,
+  // чтобы create_zajav в 00:00 ушёл по горячему TLS за 1 RTT. Завершаем заранее,
+  // чтобы запрос не висел на единственном соединении в момент выстрела.
+  const warmAheadMs = config.timing.warmAheadMs;
+  if (warmAheadMs > 0 && targetMs - Date.now() > warmAheadMs) {
+    await waitUntil(targetMs - warmAheadMs);
+    logger.info(`🔥 Прогрев соединения за ${warmAheadMs}мс до полуночи…`);
+    await Promise.all(contexts.map((ctx) => warmConnection(ctx)));
+  }
 
   // Точный выстрел в 00:00:00.000, параллельно по всем аккаунтам.
   const { drift, result: results } = await fireAt(targetMs, () =>
