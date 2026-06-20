@@ -7,7 +7,9 @@ export const logger = pino({
     target: 'pino-pretty',
     options: {
       colorize: true,
-      translateTime: 'dd.mm.yyyy HH:MM:ss',
+      // SYS: — форматировать в системной таймзоне (контейнер: TZ=Europe/Minsk).
+      // Без SYS: pino-pretty печатает время в UTC, и TZ контейнера на это не влияет.
+      translateTime: 'SYS:dd.mm.yyyy HH:MM:ss',
       ignore: 'pid,hostname',
     },
   },
