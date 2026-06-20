@@ -1,6 +1,29 @@
 // Все пользовательские тексты Telegram-бота в одном месте (этап 13).
 // Стиль: единый, со смайлами к месту, формулировки однозначны (в т.ч. чёткое
 // отличие тест-режима от боевого). Plain text — без parse_mode, спецсимволы не нужны.
+import { DateTime } from 'luxon';
+import { config } from './config.js';
+
+const ASSORT_LABELS = { 1: 'картофель', 2: 'овощи', 3: 'зелень', 4: 'плоды', 5: 'ягоды', 6: 'яблоки' };
+
+function assortText() {
+  return config.site.assortIds.map((id) => ASSORT_LABELS[id] || `ассортимент ${id}`).join(', ');
+}
+
+// Дата прописью с днём недели: "воскресенье, 21 июня 2026" (день недели важен —
+// по понедельникам рынок не работает).
+export function bookingDateLong(dateStr) {
+  if (!dateStr) return '—';
+  const d = DateTime.fromISO(dateStr).setLocale('ru');
+  return d.isValid ? d.toFormat('cccc, d MMMM yyyy') : dateStr;
+}
+
+// Краткая дата для строки состояния: "21 июня".
+export function bookingDateShort(dateStr) {
+  if (!dateStr) return '—';
+  const d = DateTime.fromISO(dateStr).setLocale('ru');
+  return d.isValid ? d.toFormat('d MMMM') : dateStr;
+}
 
 function modeLabel(dryRun) {
   return dryRun ? '🧪 тест (заявки на сайт не отправляются)' : '🔥 рабочий (заявки отправляются на сайт)';
@@ -58,8 +81,7 @@ export function outcomeText(r) {
     return '🧪 тест — заявка корректно собрана (в боевом режиме ушла бы на сайт)';
   }
   if (r.success) {
-    const b = r.booking;
-    return `🟢 место забронировано${b?.market ? ` · ${b.market}` : ''}`;
+    return '🟢 место забронировано';
   }
   const reasons = {
     no_date: '🔴 свободных дат не было',
@@ -75,7 +97,8 @@ export function outcomeText(r) {
 export function runResultText(results, { dryRun = false, date } = {}) {
   const okCount = results.filter((r) => r.success).length;
   const lines = [`🌙 bron-bot · итог ночной подачи${dryRun ? ' · 🧪 тест' : ''}`];
-  if (date) lines.push(`🗓 дата брони: ${date}`);
+  if (date) lines.push(`🗓 дата брони: ${bookingDateLong(date)}`);
+  lines.push(`🥬 ${assortText()} · 🏪 ${config.site.marketName}`);
   lines.push('');
   for (const r of results) {
     lines.push(`👤 ${r.fio || r.tag}`);

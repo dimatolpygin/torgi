@@ -3,7 +3,7 @@ import { DateTime } from 'luxon';
 import { redis } from './redis.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
-import { startReply, statusText, runResultText, alertText } from './messages.js';
+import { startReply, statusText, runResultText, alertText, bookingDateShort } from './messages.js';
 
 // Подписчики (chat_id) и последний прогон храним в Redis, чтобы переживали
 // перезапуск. Если Redis недоступен (локальный UAT) — фолбэк в память.
@@ -136,7 +136,7 @@ export function createNotifier({ statusProvider } = {}) {
     await sendToAll(runResultText(results, { dryRun, date }));
     await setLastRun({
       at: DateTime.now().setZone(config.timing.timezone).toISO(),
-      title: `${date ? date + ' — ' : ''}${anyFail ? 'частично' : 'успех'} (${okCount}/${results.length})`,
+      title: `${date ? bookingDateShort(date) + ' — ' : ''}${anyFail ? 'частично' : 'успех'} (${okCount} из ${results.length})`,
     });
   }
 

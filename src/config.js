@@ -7,6 +7,8 @@ export const config = {
     baseUrl: process.env.SITE_BASE_URL || 'https://gorod.it-minsk.by',
     // Минский Комаровский рынок
     rinokId: Number(process.env.RINOK_ID || 10),
+    // Отображаемое имя рынка (для текстов уведомлений)
+    marketName: process.env.SITE_MARKET_NAME || 'Минский Комаровский рынок',
     // Ассортимент: 1-картофель, 2-овощи, 3-зелень, 4-плоды, 5-ягоды, 6-яблоки
     assortIds: (process.env.ASSORT_IDS || '2').split(',').map((s) => Number(s.trim())),
   },
