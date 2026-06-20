@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getAccounts } from './accounts.js';
-import { prepareAll, attemptForAccount, closeAll } from './runner.js';
+import { prepareAll, attemptForAccount, closeAll, buildDateStr } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
 
@@ -48,14 +48,31 @@ export async function runNightly(
     ? DateTime.fromMillis(targetOverride).setZone(tz)
     : nextRegistrationMidnight(tz);
   const targetMs = targetOverride || target.toMillis();
+
+  // Этап 12: дата брони предвычисляется (в 00:00 открывается дата на bookingLeadDays
+  // вперёд). Прокидываем её в прогрев, чтобы в полночь не читать календарь.
+  const booking = target.plus({ days: config.timing.bookingLeadDays });
+  const predicted = {
+    day: booking.day,
+    month: booking.month,
+    year: booking.year,
+    dateStr: buildDateStr(booking.day, booking.month, booking.year),
+  };
+
   logger.info(
-    `${targetOverride ? 'E2E-прогон' : 'Следующая подача'}: ${target.setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm:ss')} (${tz}), аккаунтов: ${accounts.length}`,
+    `${targetOverride ? 'E2E-прогон' : 'Следующая подача'}: ${target.setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm:ss')} (${tz}), ` +
+      `дата брони (прогноз): ${predicted.dateStr}, аккаунтов: ${accounts.length}`,
   );
 
-  // Прогрев за leadSeconds до полуночи (изолированные сессии).
+  // Прогрев за leadSeconds до полуночи (изолированные сессии): логин, поля формы,
+  // тип места — всё заранее, чтобы в 00:00 ушёл только create_zajav.
   await waitUntil(targetMs - leadSeconds * 1000);
   logger.info(`⏰ Прогрев за ${leadSeconds}с до полуночи…`);
-  const contexts = await prepareAll(accounts);
+  const contexts = await prepareAll(accounts, { predicted });
+  // targetMs нужен быстрому пути для замера «от 00:00 до подачи».
+  contexts.forEach((ctx) => {
+    ctx.targetMs = targetMs;
+  });
 
   // Точный выстрел в 00:00:00.000, параллельно по всем аккаунтам.
   const { drift, result: results } = await fireAt(targetMs, () =>

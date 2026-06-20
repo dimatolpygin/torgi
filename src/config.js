@@ -16,6 +16,9 @@ export const config = {
     timezone: process.env.TZ_NAME || 'Europe/Minsk',
     // За сколько секунд до полуночи просыпаться и прогревать сессию
     prepareLeadSeconds: Number(process.env.PREPARE_LEAD_SECONDS || 120),
+    // На сколько дней вперёд открывается дата в 00:00 (Комаровский = неделя вперёд).
+    // Используется для предвычисления даты брони в прогреве (этап 12).
+    bookingLeadDays: Number(process.env.BOOKING_LEAD_DAYS || 7),
     // Сухой прогон: не отправлять реальную заявку
     dryRun: process.env.DRY_RUN !== 'false',
   },
