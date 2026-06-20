@@ -77,11 +77,14 @@ export function statusText({ uptimeMs, nextRun, accounts, dryRun, lastRun } = {}
 }
 
 // Исход подачи по одному аккаунту (одна строка). Статус-индикатор — единственный смайл.
-export function outcomeText(r) {
+// date — дата подачи (общая для прогона), используется как запасная, если у самого
+// результата даты нет.
+export function outcomeText(r, date) {
+  const when = bookingDateShort(r.booking?.date || r.date || date);
   if (r.success && r.dryRun) {
-    return '<i>тест — заявка корректно собрана (в рабочем режиме ушла бы на сайт)</i>';
+    return `<i>тест — заявка собрана на ${when} (в рабочем режиме ушла бы на сайт)</i>`;
   }
-  if (r.success) return '🟢 место забронировано';
+  if (r.success) return `🟢 место забронировано на <b>${when}</b>`;
   const reasons = {
     no_date: '🔴 свободных дат не было',
     rejected: '🔴 сайт отклонил заявку',
@@ -101,7 +104,7 @@ export function runResultText(results, { dryRun = false, date } = {}) {
   lines.push('');
   for (const r of results) {
     lines.push(`<b>${esc(r.fio || r.tag)}</b>`);
-    lines.push(outcomeText(r));
+    lines.push(outcomeText(r, date));
   }
   lines.push('');
   if (okCount < results.length) {

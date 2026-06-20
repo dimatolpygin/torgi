@@ -77,7 +77,8 @@ export async function runNightly(
     Promise.all(contexts.map((ctx) => runForContext(ctx, notifier))),
   );
 
-  const date = results.find((x) => x.date)?.date;
+  // Дата подачи: предвычисленная (+7) всегда известна, даже если все аккаунты упали.
+  const date = results.find((x) => x.date)?.date || predicted.dateStr;
 
   // История: пишем каждую попытку в Postgres (этап 8). Сбой записи не должен
   // ронять прогон — логируем и идём дальше.
