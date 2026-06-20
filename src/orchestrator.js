@@ -5,6 +5,7 @@ import { getAccounts } from './accounts.js';
 import { prepareAll, attemptForAccount, closeAll, buildDateStr } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
+import { blockAlertBody, runFailureBody } from './messages.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -26,10 +27,7 @@ async function runForContext(ctx, notifier) {
       if (alerted) return;
       alerted = true;
       notifier
-        .alert(
-          `Аккаунт ${ctx.fio || ctx.tag}: ${streak} ошибок подряд при подаче — ` +
-            'возможна блокировка IP. Проверьте доступ к сайту и подайте вручную.',
-        )
+        .alert(blockAlertBody({ account: ctx.fio || ctx.tag, streak }))
         .catch(() => {});
     },
   });
@@ -117,7 +115,7 @@ export async function startScheduler(notifier) {
       await runNightly(notifier, accounts);
     } catch (e) {
       logger.error(`Ошибка ночного прогона: ${e.stack || e.message}`);
-      await notifier.alert(`Сбой ночного прогона: ${e.message}`).catch(() => {});
+      await notifier.alert(runFailureBody(e.message)).catch(() => {});
       // короткая пауза, чтобы не уйти в горячий цикл при системном сбое
       await new Promise((r) => setTimeout(r, 5_000));
     }

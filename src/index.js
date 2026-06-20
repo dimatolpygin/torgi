@@ -6,6 +6,7 @@ import { getAccounts } from './accounts.js';
 import { createNotifier } from './notify.js';
 import { startScheduler } from './orchestrator.js';
 import { nextRegistrationMidnight } from './scheduler.js';
+import { startedNotice, stoppedNotice } from './messages.js';
 
 const VERSION = '0.2.0';
 
@@ -42,9 +43,11 @@ async function main() {
   notifier.launch();
   await notifier
     .notify(
-      'bron-bot запущен на сервере\n' +
-        `следующая подача: ${nextRunStr()}\n` +
-        `режим: ${config.timing.dryRun ? 'dry-run (тест)' : 'боевой'} · аккаунтов: ${accounts.length}`,
+      startedNotice({
+        nextRun: nextRunStr(),
+        dryRun: config.timing.dryRun,
+        accounts: accounts.length,
+      }),
     )
     .catch(() => {});
 
@@ -52,7 +55,7 @@ async function main() {
 
   const shutdown = async (signal) => {
     logger.info(`Получен ${signal}, завершаюсь…`);
-    await notifier.notify('bron-bot остановлен на сервере').catch(() => {});
+    await notifier.notify(stoppedNotice()).catch(() => {});
     notifier.stop(signal);
     await pool.end().catch(() => {});
     await redis.quit().catch(() => {});
