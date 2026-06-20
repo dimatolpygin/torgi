@@ -11,6 +11,9 @@ services:
     environment:
       PGHOST: postgres
       REDIS_HOST: redis
+      # Системное время контейнера = Минск (для читаемых логов; на расчёт расписания
+      # не влияет — планировщик считает в Europe/Minsk через luxon явно).
+      TZ: Europe/Minsk
 
   postgres:
     image: postgres:16-alpine
