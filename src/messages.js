@@ -3,7 +3,7 @@
 // отличие тест-режима от боевого). Plain text — без parse_mode, спецсимволы не нужны.
 
 function modeLabel(dryRun) {
-  return dryRun ? '🧪 тест (заявки на сайт не отправляются)' : '🔥 боевой (заявки отправляются)';
+  return dryRun ? '🧪 тест (заявки на сайт не отправляются)' : '🔥 рабочий (заявки отправляются на сайт)';
 }
 
 function humanDuration(ms) {
@@ -32,7 +32,7 @@ export function startedNotice({ nextRun, dryRun, accounts }) {
     '',
     `🗓 следующая подача: ${nextRun}`,
     `⚙️ режим: ${modeLabel(dryRun)}`,
-    `👥 аккаунтов: ${accounts}`,
+    `👥 кабинетов: ${accounts}`,
   ].join('\n');
 }
 
@@ -44,11 +44,11 @@ export function stoppedNotice() {
 // Ответ на /status — состояние бота.
 export function statusText({ uptimeMs, nextRun, accounts, dryRun, lastRun } = {}) {
   const lines = ['🤖 bron-bot · состояние', ''];
-  if (uptimeMs != null) lines.push(`⏱ аптайм: ${humanDuration(uptimeMs)}`);
+  if (uptimeMs != null) lines.push(`🟢 бот работает: ${humanDuration(uptimeMs)} без перерыва`);
   if (nextRun) lines.push(`🗓 следующая подача: ${nextRun}`);
-  if (accounts != null) lines.push(`👥 аккаунтов: ${accounts}`);
+  if (accounts != null) lines.push(`👥 кабинетов: ${accounts}`);
   lines.push(`⚙️ режим: ${modeLabel(dryRun)}`);
-  lines.push(`📨 последний прогон: ${lastRun ? lastRun.title : 'ещё не было'}`);
+  lines.push(`📨 последняя подача: ${lastRun ? lastRun.title : 'ещё не было'}`);
   return lines.join('\n');
 }
 
