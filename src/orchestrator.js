@@ -5,7 +5,7 @@ import { getAccounts } from './accounts.js';
 import { prepareAll, attemptForAccount, closeAll, buildDateStr, warmConnection } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
-import { blockAlertBody, runFailureBody } from './messages.js';
+import { blockAlertBody, runFailureBody, preflightNotice } from './messages.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -71,6 +71,23 @@ export async function runNightly(
   contexts.forEach((ctx) => {
     ctx.targetMs = targetMs;
   });
+
+  // Pre-flight (этап 16): позитивное подтверждение разработчику, что бот жив и
+  // прогрелся — ровно в единственный важный момент (за leadSeconds до 00:00).
+  // Отсутствие этого сообщения = бот не дошёл до прогрева.
+  if (config.health.preflight) {
+    const ready = contexts.filter((c) => c.loggedIn).length;
+    await notifier
+      .notifyDev(
+        preflightNotice({
+          nextRun: target.setLocale('ru').toFormat('cccc dd.MM.yyyy HH:mm'),
+          ready,
+          total: contexts.length,
+          dryRun: config.timing.dryRun,
+        }),
+      )
+      .catch(() => {});
+  }
 
   // Тёплое соединение за warmAheadMs до полуночи (этап 14): «оживляем» сокет,
   // чтобы create_zajav в 00:00 ушёл по горячему TLS за 1 RTT. Завершаем заранее,
