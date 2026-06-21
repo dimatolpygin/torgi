@@ -86,12 +86,8 @@ export const config = {
 
   // Мониторинг сервера (этап 16).
   health: {
-    // Dead-man's switch: URL healthchecks.io (или совместимого). Бот пингует его
-    // раз в pingIntervalMs; если пинги прекратятся — внешний сервис сам уведомит
-    // разработчика (вкл. восстановление). Пусто — внешний мониторинг выключен.
-    healthchecksUrl: process.env.HEALTHCHECKS_URL || '',
-    pingIntervalMs: Number(process.env.HEALTHCHECKS_PING_MS || 60_000),
     // Pre-flight: слать разработчику «жив, готов к подаче» при ночном прогреве.
+    // Отсутствие этого сообщения ~23:58 = бот не дошёл до прогрева.
     preflight: process.env.HEALTH_PREFLIGHT !== 'false',
   },
 };

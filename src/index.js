@@ -6,7 +6,6 @@ import { getAccounts } from './accounts.js';
 import { createNotifier } from './notify.js';
 import { startScheduler } from './orchestrator.js';
 import { nextRegistrationMidnight } from './scheduler.js';
-import { startHealthPing } from './health.js';
 import { startedNotice, stoppedNotice } from './messages.js';
 
 const VERSION = '0.2.0';
@@ -63,14 +62,10 @@ async function main() {
     )
     .catch(() => {});
 
-  // Этап 16: внешний dead-man's switch (пинг healthchecks.io).
-  const stopHealth = startHealthPing();
-
   logger.info('✅ Каркас жив, Telegram подключён. Планировщик ночной подачи активен.');
 
   const shutdown = async (signal) => {
     logger.info(`Получен ${signal}, завершаюсь…`);
-    stopHealth();
     await notifier.notifyDev(stoppedNotice()).catch(() => {});
     notifier.stop(signal);
     await pool.end().catch(() => {});
