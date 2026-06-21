@@ -1,5 +1,23 @@
 import 'dotenv/config';
 
+// Роли подписчиков Telegram. dev — надмножество (получает всё + состояние сервера).
+export const ROLES = ['wife', 'husband', 'dev'];
+
+// Парсинг кодовых слов из env TELEGRAM_CODE_WORDS.
+// Формат: "слово:роль:метка" через запятую, напр. "abc:wife:Жена,xyz:dev:Разработчик".
+// Метка необязательна. Слово сравнивается регистронезависимо (нижний регистр).
+function parseCodeWords(raw) {
+  return (raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [word = '', role = '', ...rest] = entry.split(':').map((x) => x.trim());
+      return { word: word.toLowerCase(), role, label: rest.join(':') };
+    })
+    .filter((c) => c.word && ROLES.includes(c.role));
+}
+
 // Единая точка конфигурации. Значения берутся из окружения (.env / docker-compose).
 export const config = {
   // Целевой сайт
@@ -62,6 +80,19 @@ export const config = {
   // Telegram
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
+    // Кодовые слова для подписки с ролью (см. parseCodeWords).
+    codeWords: parseCodeWords(process.env.TELEGRAM_CODE_WORDS),
+  },
+
+  // Мониторинг сервера (этап 16).
+  health: {
+    // Dead-man's switch: URL healthchecks.io (или совместимого). Бот пингует его
+    // раз в pingIntervalMs; если пинги прекратятся — внешний сервис сам уведомит
+    // разработчика (вкл. восстановление). Пусто — внешний мониторинг выключен.
+    healthchecksUrl: process.env.HEALTHCHECKS_URL || '',
+    pingIntervalMs: Number(process.env.HEALTHCHECKS_PING_MS || 60_000),
+    // Pre-flight: слать разработчику «жив, готов к подаче» при ночном прогреве.
+    preflight: process.env.HEALTH_PREFLIGHT !== 'false',
   },
 };
 
