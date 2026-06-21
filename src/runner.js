@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import { login, restoreSession } from './site/auth.js';
 import { readMarketState, getTypeMest } from './site/market.js';
 import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
-import { verifyBooking } from './site/bookings.js';
+import { getBookings } from './site/bookings.js';
 import { loadSession, saveSession, markDone, isDone } from './session.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
@@ -92,27 +92,50 @@ function buildDateStr(day, month, year) {
   return `${year}-${m}-${d}`;
 }
 
-// Обработка ответа на create_zajav: dry-run / отклонение / верификация в ЛК.
-// Общая часть для быстрого (00:00) и полного (долбёжка) путей.
-async function handleSubmit(ctx, attempt, sub, dateStr) {
+// Подача N мест на одну дату (N = config.site.bookingsPerAccount) + верификация
+// числа броней в ЛК. Общая часть для быстрого (00:00) и полного (долбёжка) путей.
+async function submitBookings(ctx, attempt, payload, dateStr) {
   const { tag, client } = ctx;
-  if (sub.dryRun) {
-    alog(tag, `попытка ${attempt}: dry-run, заявка собрана на ${dateStr}`);
-    return { tag, success: true, dryRun: true, date: dateStr };
+  const n = config.site.bookingsPerAccount;
+  const dryRun = config.timing.dryRun;
+
+  // N заявок = N слотов на одну дату. Последовательно по одному keep-alive сокету:
+  // при пинге ~1-2 мс это всё равно единицы миллисекунд после 00:00.
+  const subs = [];
+  for (let i = 0; i < n; i++) {
+    subs.push(await submitOrder(client, payload, { dryRun }));
   }
-  if (!sub.accepted) {
-    alog(tag, `попытка ${attempt}: сервер отклонил (code=${sub.response?.code})`, 'warn');
-    return { tag, success: false, reason: 'rejected', response: sub.response, date: dateStr };
+
+  if (dryRun) {
+    alog(tag, `попытка ${attempt}: dry-run, собрано ${n} заявк(и) на ${dateStr}`);
+    return { tag, success: true, dryRun: true, date: dateStr, count: n };
   }
-  // Верификация по факту в ЛК (после подачи, вне «горячего» окна).
-  const found = await verifyBooking(client, { date: dateStr });
-  if (found) {
-    await markDone(tag, dateStr);
-    alog(tag, `✅ заявка подтверждена в ЛК: ${found.date}, ${found.market}`);
-    return { tag, success: true, date: dateStr, booking: found };
+
+  const acceptedCount = subs.filter((s) => s.accepted).length;
+  if (acceptedCount === 0) {
+    alog(tag, `попытка ${attempt}: сервер отклонил все ${n} (code=${subs[0]?.response?.code})`, 'warn');
+    return { tag, success: false, reason: 'rejected', response: subs[0]?.response, date: dateStr };
   }
-  alog(tag, 'заявка отправлена, но в ЛК не подтверждена', 'warn');
-  return { tag, success: false, reason: 'not_verified', date: dateStr };
+
+  // Верификация по факту в ЛК (после подачи, вне «горячего» окна): сколько броней
+  // на нужную дату (Комаровский, овощи).
+  const bookings = await getBookings(client);
+  const found = bookings.filter(
+    (b) => b.date === dateStr && b.market.includes('Комаровский') && b.assort.includes('овощи'),
+  );
+  // Подавали — больше в эту ночь по дате не повторяем (стоп долбёжки).
+  if (acceptedCount > 0) await markDone(tag, dateStr);
+
+  if (found.length >= n) {
+    alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
+    return { tag, success: true, date: dateStr, count: found.length, booking: found[0] };
+  }
+  if (found.length > 0) {
+    alog(tag, `⚠ частично: в ЛК ${found.length} из ${n} мест на ${dateStr} (сервер принял ${acceptedCount})`, 'warn');
+    return { tag, success: false, reason: 'partial', date: dateStr, count: found.length };
+  }
+  alog(tag, `заявки отправлены (принято ${acceptedCount}), но в ЛК на ${dateStr} ничего не подтверждено`, 'warn');
+  return { tag, success: false, reason: 'not_verified', date: dateStr, count: 0 };
 }
 
 // Одна попытка подачи для подготовленного аккаунта.
@@ -143,10 +166,9 @@ export async function attemptForAccount(ctx, attempt = 1) {
     // Замер «от 00:00 до подачи»: время от целевой полуночи до отправки запроса.
     const sinceMidnight = ctx.targetMs != null ? Date.now() - ctx.targetMs : null;
     if (sinceMidnight != null) {
-      alog(tag, `⏱ от 00:00 до подачи: ${sinceMidnight >= 0 ? '+' : ''}${sinceMidnight} мс (1 запрос create_zajav)`);
+      alog(tag, `⏱ от 00:00 до подачи: ${sinceMidnight >= 0 ? '+' : ''}${sinceMidnight} мс (${config.site.bookingsPerAccount} запрос(ов) create_zajav)`);
     }
-    const sub = await submitOrder(client, payload, { dryRun: config.timing.dryRun });
-    return handleSubmit(ctx, attempt, sub, dateStr);
+    return submitBookings(ctx, attempt, payload, dateStr);
   }
 
   // --- Полный путь: чтение рынка → поля → подача (долбёжка / нет прогрева) ---
@@ -177,8 +199,7 @@ export async function attemptForAccount(ctx, attempt = 1) {
     assortIds: config.site.assortIds,
   });
 
-  const sub = await submitOrder(client, payload, { dryRun: config.timing.dryRun });
-  return handleSubmit(ctx, attempt, sub, dateStr);
+  return submitBookings(ctx, attempt, payload, dateStr);
 }
 
 // Параллельная подготовка всех аккаунтов (изолированные сессии).

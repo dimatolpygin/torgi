@@ -81,10 +81,15 @@ export function statusText({ uptimeMs, nextRun, accounts, dryRun, lastRun } = {}
 // результата даты нет.
 export function outcomeText(r, date) {
   const when = bookingDateShort(r.booking?.date || r.date || date);
+  const n = r.count || 1;
+  const target = config.site.bookingsPerAccount;
   if (r.success && r.dryRun) {
-    return `<i>тест — заявка собрана на ${when} (в рабочем режиме ушла бы на сайт)</i>`;
+    return `<i>тест — собрано ${n} ${placesWord(n)} на ${when} (в рабочем режиме ушли бы на сайт)</i>`;
   }
-  if (r.success) return `🟢 место забронировано на <b>${when}</b>`;
+  if (r.success) return `🟢 забронировано <b>${n} ${placesWord(n)}</b> на <b>${when}</b>`;
+  if (r.reason === 'partial') {
+    return `🟡 взято ${r.count} из ${target} ${placesWord(target)} на ${when} — <u>добавьте недостающее вручную</u>`;
+  }
   const reasons = {
     no_date: '🔴 свободных дат не было',
     rejected: '🔴 сайт отклонил заявку',
@@ -93,6 +98,16 @@ export function outcomeText(r, date) {
     error: '🔴 сетевая ошибка при подаче',
   };
   return reasons[r.reason] || `🔴 ${esc(r.reason || 'неизвестная причина')}`;
+}
+
+// Склонение слова «место» по числу: 1 место, 2 места, 5 мест.
+function placesWord(n) {
+  const a = Math.abs(n) % 100;
+  const b = n % 10;
+  if (a > 10 && a < 20) return 'мест';
+  if (b === 1) return 'место';
+  if (b >= 2 && b <= 4) return 'места';
+  return 'мест';
 }
 
 // Итог ночной подачи по всем аккаунтам.

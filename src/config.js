@@ -11,6 +11,9 @@ export const config = {
     marketName: process.env.SITE_MARKET_NAME || 'Минский Комаровский рынок',
     // Ассортимент: 1-картофель, 2-овощи, 3-зелень, 4-плоды, 5-ягоды, 6-яблоки
     assortIds: (process.env.ASSORT_IDS || '2').split(',').map((s) => Number(s.trim())),
+    // Сколько мест бронировать на аккаунт за подачу (лимит сайта — 2/дату).
+    // 1 — бот берёт одно место (клиент 2-е вручную); 2 — бот забирает обе ячейки.
+    bookingsPerAccount: Math.max(1, Number(process.env.BOOKINGS_PER_ACCOUNT || 1)),
   },
 
   // Тайминг подачи
