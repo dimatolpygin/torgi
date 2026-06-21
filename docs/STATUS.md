@@ -44,12 +44,18 @@
 
 **BY-сервер (боевой, для этапа 15)**: `155.212.244.79` (root), Минск, Yedinyye Resheniya LLC. Пинг до сайта `87.252.228.216` — min/avg/max 1.3/2.1/6.0 мс, 0% потерь. SSH host-key: `SHA256:I3kmpZuP/2Y8fNANYEZ3KH+Wn/2Mot2xK1YRzqaMAAo`. Пароль — в `.secrets`/доступах, не в репо.
 
-## Прод (тест-сервер)
+## Прод (BY-сервер, боевой — развёрнут на этапе 15)
 
-- Сервер: `163.5.153.147` (Ubuntu 24.04, 1 CPU / 1GB + swap 2G), каталог `/opt/bron-bot`.
+- Сервер: `155.212.244.79` (Ubuntu 22.04, 1 CPU / 1.9GB + swap 1.1G), Минск, каталог `/opt/bron-bot`. Docker 29.6, Compose v5.1. SSH host-key `SHA256:I3kmpZuP/2Y8fNANYEZ3KH+Wn/2Mot2xK1YRzqaMAAo`. Deploy-ключ `.secrets/deploy_key` (тот же, что у тест-сервера — добавлен в authorized_keys BY).
+- Стек app+postgres+redis поднят, оба аккаунта (жена `4131195c017pb4`, муж `3080391c002pb8`) в `.env` (`.secrets/server-by.env`, gitignored). Режим: `DRY_RUN=true`, `TELEGRAM_BOT_TOKEN` пуст (поллинг выключен, чтобы не конфликтовать с тест-сервером).
+- Замер с BY-сервера (2-акк DRY_RUN E2E): выстрел `create_zajav` за **+0/+1 мс от 00:00** (1 RTT, пинг ~2 мс). Планировщик: «вт 23.06 00:00», понедельник пропущен.
+- **Осталось до боевого режима (cutover):** (1) GitHub Secret `SERVER_HOST` → `155.212.244.79` (репоинт автодеплоя на BY; ключ тот же); (2) вписать `TELEGRAM_BOT_TOKEN` в BY `.env` + перенести подписчика + остановить тест-сервер (один токен — один поллер); (3) `DRY_RUN=false`; (4) клиентка оставляет 1 свободную ячейку под бота; (5) несколько боевых ночей в подстраховке.
+
+## Прод (тест-сервер, выводится из эксплуатации после cutover)
+
+- Сервер: `163.5.153.147` (Ubuntu 24.04, 1 CPU / 1GB + swap 2G), каталог `/opt/bron-bot`. Сейчас держит бота клиентки (Telegram-поллинг, подписчик `2042819654`) до cutover.
 - Репо: https://github.com/dimatolpygin/torgi — `master` (автодеплой), `dev` (разработка).
 - CI/CD: push в `master` → GitHub Actions (`appleboy/ssh-action`) → `git reset --hard` + `docker compose up -d --build`. Secrets: SERVER_HOST, SERVER_USER, SSH_PRIVATE_KEY. Deploy-ключ в `.secrets/deploy_key` (gitignored).
-- Режим на сервере: `DRY_RUN=true` (тест-период), 1 аккаунт. Для боевого режима — поменять `.env` на сервере и/или перенести на белорусский сервер (пост-этап).
 - Подписчик Telegram: клиент должен отправить боту `/start` (запишется в серверный Redis).
 
 ## Известные блокеры
