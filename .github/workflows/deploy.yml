@@ -3,6 +3,11 @@ name: Deploy
 on:
   push:
     branches: [master]
+    # Docs-/markdown-коммиты не пересобирают бота на проде (иначе клиентке каждый
+    # раз летит «бот запущен»). Деплой только при изменениях кода.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 jobs:
