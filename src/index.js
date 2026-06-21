@@ -10,6 +10,16 @@ import { startedNotice, stoppedNotice } from './messages.js';
 
 const VERSION = '0.2.0';
 
+// Глобальная страховка: не падать молча от случайного rejection/исключения.
+// Логируем и продолжаем — основной цикл подачи и так обёрнут в try/catch,
+// терять рабочую ночь из-за стрэй-ошибки нельзя.
+process.on('unhandledRejection', (reason) => {
+  logger.error(`Необработанный rejection: ${reason?.stack || reason}`);
+});
+process.on('uncaughtException', (err) => {
+  logger.error(`Необработанное исключение: ${err?.stack || err?.message || err}`);
+});
+
 async function main() {
   const startedAt = Date.now();
   logger.info(`🚀 bron-bot v${VERSION} запускается…`);

@@ -55,34 +55,41 @@ export async function warmConnection(ctx) {
 // predicted — предвычисленная дата брони {day,month,year,dateStr} для прогрева (этап 12).
 export async function prepareAccount(account, { predicted } = {}) {
   const tag = account.login;
-  let ctx;
+  // Подготовка изолирована: сетевой сбой/исключение на одном аккаунте не должен
+  // ронять всю ночь (см. prepareAll). При ошибке — безопасный ctx с loggedIn:false.
+  try {
+    let ctx;
 
-  const saved = await loadSession(tag);
-  if (saved) {
-    const r = await restoreSession(saved);
-    if (r.loggedIn) {
-      alog(tag, `сессия восстановлена из Redis (${r.fio || tag}) — логин не потребовался`);
-      ctx = { account, tag, client: r.client, loggedIn: true, fio: r.fio, restored: true };
-    } else {
-      await r.client.close().catch(() => {});
-      alog(tag, 'сохранённая сессия устарела — выполняю вход', 'warn');
+    const saved = await loadSession(tag);
+    if (saved) {
+      const r = await restoreSession(saved);
+      if (r.loggedIn) {
+        alog(tag, `сессия восстановлена из Redis (${r.fio || tag}) — логин не потребовался`);
+        ctx = { account, tag, client: r.client, loggedIn: true, fio: r.fio, restored: true };
+      } else {
+        await r.client.close().catch(() => {});
+        alog(tag, 'сохранённая сессия устарела — выполняю вход', 'warn');
+      }
     }
-  }
 
-  if (!ctx) {
-    const { client, loggedIn, fio } = await login(account.login, account.password);
-    if (loggedIn) {
-      await saveSession(tag, client.cookies);
-      alog(tag, `сессия готова (${fio || tag}), кука сохранена в Redis`);
-    } else {
-      alog(tag, 'вход не удался', 'warn');
+    if (!ctx) {
+      const { client, loggedIn, fio } = await login(account.login, account.password);
+      if (loggedIn) {
+        await saveSession(tag, client.cookies);
+        alog(tag, `сессия готова (${fio || tag}), кука сохранена в Redis`);
+      } else {
+        alog(tag, 'вход не удался', 'warn');
+      }
+      ctx = { account, tag, client, loggedIn, fio };
     }
-    ctx = { account, tag, client, loggedIn, fio };
-  }
 
-  // Прогрев только для залогиненного аккаунта и когда известна целевая дата.
-  if (ctx.loggedIn && predicted) await warmupAccount(ctx, predicted);
-  return ctx;
+    // Прогрев только для залогиненного аккаунта и когда известна целевая дата.
+    if (ctx.loggedIn && predicted) await warmupAccount(ctx, predicted);
+    return ctx;
+  } catch (e) {
+    alog(tag, `подготовка не удалась (${e.message}) — аккаунт пропущен в эту подачу`, 'warn');
+    return { account, tag, client: null, loggedIn: false, fio: null, error: e };
+  }
 }
 
 // Собрать дату YYYY-MM-DD из дня и месяца/года календаря.
@@ -204,8 +211,15 @@ export async function attemptForAccount(ctx, attempt = 1) {
 
 // Параллельная подготовка всех аккаунтов (изолированные сессии).
 // opts.predicted прокидывается в прогрев каждого аккаунта (этап 12).
+// allSettled — страховка: даже неожиданное исключение в одном аккаунте не
+// отменяет подготовку остальных (prepareAccount и сам не бросает).
 export async function prepareAll(accounts, opts = {}) {
-  return Promise.all(accounts.map((a) => prepareAccount(a, opts)));
+  const settled = await Promise.allSettled(accounts.map((a) => prepareAccount(a, opts)));
+  return settled.map((s, i) =>
+    s.status === 'fulfilled'
+      ? s.value
+      : { account: accounts[i], tag: accounts[i].login, client: null, loggedIn: false, error: s.reason },
+  );
 }
 
 // Параллельная подача по всем подготовленным аккаунтам.
