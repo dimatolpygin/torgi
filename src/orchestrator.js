@@ -5,7 +5,7 @@ import { getAccounts } from './accounts.js';
 import { prepareAll, attemptForAccount, closeAll, buildDateStr, warmConnection } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
-import { blockAlertBody, runFailureBody, preflightNotice } from './messages.js';
+import { blockAlertBody, runFailureBody, preflightNotice, timingNotice } from './messages.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -126,6 +126,11 @@ export async function runNightly(
   );
 
   await notifier.notifyRunResult(results, { date });
+  // Тайминг подачи — отдельным сообщением только разработчику (точность выстрела +
+  // «от 00:00 до подачи» по каждому аккаунту).
+  await notifier
+    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun }))
+    .catch(() => {});
   await closeAll(contexts);
   return results;
 }

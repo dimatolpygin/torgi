@@ -175,7 +175,9 @@ export async function attemptForAccount(ctx, attempt = 1) {
     if (sinceMidnight != null) {
       alog(tag, `⏱ от 00:00 до подачи: ${sinceMidnight >= 0 ? '+' : ''}${sinceMidnight} мс (${config.site.bookingsPerAccount} запрос(ов) create_zajav)`);
     }
-    return submitBookings(ctx, attempt, payload, dateStr);
+    const r = await submitBookings(ctx, attempt, payload, dateStr);
+    if (sinceMidnight != null) r.submitMs = sinceMidnight; // для отчёта тайминга разработчику
+    return r;
   }
 
   // --- Полный путь: чтение рынка → поля → подача (долбёжка / нет прогрева) ---

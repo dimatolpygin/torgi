@@ -67,6 +67,20 @@ export function codeRejectedReply() {
   ].join('\n');
 }
 
+// Тайминг подачи для разработчика: точность выстрела + «от 00:00 до подачи» по
+// каждому аккаунту (мс). Отдельным сообщением, только dev.
+export function timingNotice({ drift, results = [], dryRun } = {}) {
+  const lines = [`<b>⏱ Тайминг подачи (00:00)</b>${dryRun ? ' <i>(тест)</i>' : ''}`, ''];
+  if (drift != null) {
+    lines.push(`Точность выстрела: <b>${drift >= 0 ? '+' : ''}${drift} мс</b> от 00:00:00.000`);
+  }
+  for (const r of results) {
+    const ms = r.submitMs != null ? `<b>${r.submitMs >= 0 ? '+' : ''}${r.submitMs} мс</b>` : '<i>—</i>';
+    lines.push(`${esc(r.fio || r.tag)}: ${ms}`);
+  }
+  return lines.join('\n');
+}
+
 // Pre-flight для разработчика: бот жив и готовится к подаче в 00:00.
 export function preflightNotice({ nextRun, ready, total, dryRun } = {}) {
   return [
