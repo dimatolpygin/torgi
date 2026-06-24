@@ -12,6 +12,19 @@ function alog(tag, msg, level = 'info') {
   logger[level](`[${tag}] ${msg}`);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Рандомизированная пауза-маскировка перед второй+ заявкой (этап 17). Берём целое
+// число мс из [minMs, maxMs] (границы устойчивы к перестановке). 0, если маскировка
+// выключена (maxMs<=0). Случайность важна: фикс. разрыв сам по себе оставляет след.
+function maskGapMs() {
+  const { minMs, maxMs } = config.timing.submitGap;
+  if (maxMs <= 0) return 0;
+  const lo = Math.min(minMs, maxMs);
+  const hi = Math.max(minMs, maxMs);
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
 // Прогрев аккаунта (этап 12): всё, что можно сделать заранее, чтобы в 00:00 ушёл
 // единственный запрос — create_zajav. Заранее тянем поля формы и тип места, и
 // кладём предвычисленную дату брони в ctx. Сбой прогрева не критичен — в 00:00
@@ -106,10 +119,19 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
   const n = config.site.bookingsPerAccount;
   const dryRun = config.timing.dryRun;
 
-  // N заявок = N слотов на одну дату. Последовательно по одному keep-alive сокету:
-  // при пинге ~1-2 мс это всё равно единицы миллисекунд после 00:00.
+  // N заявок = N слотов на одну дату. 1-я уходит сразу в 00:00 (гонка не страдает);
+  // каждая следующая — после рандомизированной паузы-маскировки (этап 17), чтобы в
+  // утренних списках админов не было «мгновенного дубля» одного имени. Пауза своя на
+  // каждый аккаунт (attemptAll крутит аккаунты параллельно — разрывы не совпадают).
   const subs = [];
   for (let i = 0; i < n; i++) {
+    if (i > 0) {
+      const gap = maskGapMs();
+      if (gap > 0) {
+        alog(tag, `маскировка: пауза ${gap} мс перед заявкой ${i + 1} из ${n}`);
+        await sleep(gap);
+      }
+    }
     subs.push(await submitOrder(client, payload, { dryRun }));
   }
 
