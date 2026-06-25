@@ -1,11 +1,11 @@
 import { DateTime } from 'luxon';
-import { config } from './config.js';
+import { config, accountRole } from './config.js';
 import { logger } from './logger.js';
 import { getAccounts } from './accounts.js';
 import { prepareAll, attemptForAccount, closeAll, buildDateStr, warmConnection } from './runner.js';
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
-import { blockAlertBody, runFailureBody, preflightNotice, timingNotice } from './messages.js';
+import { blockAlertBody, runFailureBody, preflightNotice, timingNotice, accountTimingNotice } from './messages.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -126,11 +126,24 @@ export async function runNightly(
   );
 
   await notifier.notifyRunResult(results, { date });
-  // Тайминг подачи — отдельным сообщением только разработчику (точность выстрела +
-  // «от 00:00 до подачи» по каждому аккаунту).
+  // Тайминг подачи разработчику — точность выстрела + время КАЖДОЙ заявки (1-й и 2-й)
+  // по КАЖДОМУ аккаунту, одним сообщением (этап 18).
   await notifier
     .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun }))
     .catch(() => {});
+  // Персональный тайминг жене/мужу — каждому на ЕГО кабинет (1-я и 2-я заявка),
+  // только при успехе подачи этого кабинета (этап 18). Роль аккаунта берётся из
+  // ACCOUNT_ROLES; dev получает общий отчёт выше, повторно ему не шлём.
+  await Promise.all(
+    results.map((r) => {
+      if (!r.success) return null;
+      const role = accountRole(r.tag);
+      if (!role || role === 'dev') return null;
+      return notifier
+        .notifyRole([role], accountTimingNotice(r, { date, dryRun: config.timing.dryRun }))
+        .catch(() => {});
+    }),
+  );
   await closeAll(contexts);
   return results;
 }

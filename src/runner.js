@@ -120,10 +120,11 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
   const dryRun = config.timing.dryRun;
 
   // N заявок = N слотов на одну дату. 1-я уходит сразу в 00:00 (гонка не страдает);
-  // каждая следующая — после рандомизированной паузы-маскировки (этап 17), чтобы в
-  // утренних списках админов не было «мгновенного дубля» одного имени. Пауза своя на
-  // каждый аккаунт (attemptAll крутит аккаунты параллельно — разрывы не совпадают).
+  // каждая следующая — после паузы-маскировки (этап 17), чтобы в утренних списках
+  // админов не было «мгновенного дубля» одного имени. Время каждой заявки «от 00:00»
+  // фиксируем (submitTimesMs) для отчёта тайминга жене/мужу/разработчику (этап 18).
   const subs = [];
+  const submitTimesMs = [];
   for (let i = 0; i < n; i++) {
     if (i > 0) {
       const gap = maskGapMs();
@@ -132,18 +133,19 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
         await sleep(gap);
       }
     }
+    submitTimesMs.push(ctx.targetMs != null ? Date.now() - ctx.targetMs : null);
     subs.push(await submitOrder(client, payload, { dryRun }));
   }
 
   if (dryRun) {
     alog(tag, `попытка ${attempt}: dry-run, собрано ${n} заявк(и) на ${dateStr}`);
-    return { tag, success: true, dryRun: true, date: dateStr, count: n };
+    return { tag, success: true, dryRun: true, date: dateStr, count: n, submitTimesMs };
   }
 
   const acceptedCount = subs.filter((s) => s.accepted).length;
   if (acceptedCount === 0) {
     alog(tag, `попытка ${attempt}: сервер отклонил все ${n} (code=${subs[0]?.response?.code})`, 'warn');
-    return { tag, success: false, reason: 'rejected', response: subs[0]?.response, date: dateStr };
+    return { tag, success: false, reason: 'rejected', response: subs[0]?.response, date: dateStr, submitTimesMs };
   }
 
   // Верификация по факту в ЛК (после подачи, вне «горячего» окна): сколько броней
@@ -157,14 +159,14 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
 
   if (found.length >= n) {
     alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
-    return { tag, success: true, date: dateStr, count: found.length, booking: found[0] };
+    return { tag, success: true, date: dateStr, count: found.length, booking: found[0], submitTimesMs };
   }
   if (found.length > 0) {
     alog(tag, `⚠ частично: в ЛК ${found.length} из ${n} мест на ${dateStr} (сервер принял ${acceptedCount})`, 'warn');
-    return { tag, success: false, reason: 'partial', date: dateStr, count: found.length };
+    return { tag, success: false, reason: 'partial', date: dateStr, count: found.length, submitTimesMs };
   }
   alog(tag, `заявки отправлены (принято ${acceptedCount}), но в ЛК на ${dateStr} ничего не подтверждено`, 'warn');
-  return { tag, success: false, reason: 'not_verified', date: dateStr, count: 0 };
+  return { tag, success: false, reason: 'not_verified', date: dateStr, count: 0, submitTimesMs };
 }
 
 // Одна попытка подачи для подготовленного аккаунта.

@@ -18,6 +18,31 @@ function parseCodeWords(raw) {
     .filter((c) => c.word && ROLES.includes(c.role));
 }
 
+// Привязка аккаунта к Telegram-роли — чтобы слать тайминг подачи жене/мужу на ИХ
+// собственный кабинет. Формат env ACCOUNT_ROLES: "подстрока_логина:роль" через запятую,
+// напр. "4131195:wife,3080391:husband". Логин на сайте меняется по дням, но стабильна
+// числовая часть до 'c' — по ней (подстроке) и матчим. Пусто = индивидуальный тайминг
+// не шлём (репозиторий публичный — реальные логины держим только в серверном .env).
+function parseAccountRoles(raw) {
+  return (raw || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [match = '', role = ''] = entry.split(':').map((x) => x.trim());
+      return { match, role };
+    })
+    .filter((x) => x.match && ROLES.includes(x.role));
+}
+
+// Роль аккаунта по его логину (первое совпадение по подстроке). null — не задано.
+export function accountRole(login) {
+  for (const { match, role } of config.telegram.accountRoles) {
+    if (String(login).includes(match)) return role;
+  }
+  return null;
+}
+
 // Единая точка конфигурации. Значения берутся из окружения (.env / docker-compose).
 export const config = {
   // Целевой сайт
@@ -46,12 +71,12 @@ export const config = {
     // держит TCP/TLS-сокет горячим, чтобы create_zajav ушёл за 1 RTT без переустановки.
     warmAheadMs: Number(process.env.WARM_AHEAD_MS || 4000),
     // Разнос второй+ заявки по времени (этап 17, маскировка): 1-я заявка уходит в 00:00
-    // (гонка не страдает), каждая следующая — после рандомизированной паузы в этом
-    // диапазоне (мс). Рандом, а не фикс. разрыв: одинаковый штамп сам по себе след.
-    // Независимо по аккаунтам. При BOOKINGS_PER_ACCOUNT=1 не влияет (заявка одна).
+    // (гонка не страдает), каждая следующая — после паузы в этом диапазоне (мс).
+    // По решению клиентки разрыв ФИКСИРОВАННЫЙ — строго 2 с (min=max). Если задать
+    // min<max — пауза станет случайной из диапазона. При BOOKINGS_PER_ACCOUNT=1 не влияет.
     submitGap: {
       minMs: Math.max(0, Number(process.env.SUBMIT_GAP_MIN_MS || 2000)),
-      maxMs: Math.max(0, Number(process.env.SUBMIT_GAP_MAX_MS || 8000)),
+      maxMs: Math.max(0, Number(process.env.SUBMIT_GAP_MAX_MS || 2000)),
     },
     // Сухой прогон: не отправлять реальную заявку
     dryRun: process.env.DRY_RUN !== 'false',
@@ -90,6 +115,8 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     // Кодовые слова для подписки с ролью (см. parseCodeWords).
     codeWords: parseCodeWords(process.env.TELEGRAM_CODE_WORDS),
+    // Привязка аккаунт→роль для индивидуального тайминга (см. parseAccountRoles).
+    accountRoles: parseAccountRoles(process.env.ACCOUNT_ROLES),
   },
 
   // Мониторинг сервера (этап 16).

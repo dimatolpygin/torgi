@@ -29,6 +29,7 @@ function disabledNotifier() {
     stop: noop,
     notify: noop,
     notifyDev: noop,
+    notifyRole: noop,
     alert: noop,
     notifyRunResult: noop,
     setLastRun: noop,
@@ -163,6 +164,11 @@ export function createNotifier({ statusProvider } = {}) {
     await sendTo(['dev'], text);
   }
 
+  // Сообщение подписчикам конкретной роли (напр. персональный тайминг жене/мужу).
+  async function notifyRole(roles, text) {
+    await sendTo(roles, text);
+  }
+
   // Алерт об ошибке на торгах — заметный префикс, чтобы клиент среагировал.
   // Идёт всем (муж/жена должны знать, что надо подать вручную).
   async function alert(text) {
@@ -201,6 +207,7 @@ export function createNotifier({ statusProvider } = {}) {
     stop,
     notify,
     notifyDev,
+    notifyRole,
     alert,
     notifyRunResult,
     setLastRun,

@@ -67,17 +67,62 @@ export function codeRejectedReply() {
   ].join('\n');
 }
 
-// Тайминг подачи для разработчика: точность выстрела + «от 00:00 до подачи» по
-// каждому аккаунту (мс). Отдельным сообщением, только dev.
+// Смещение «от 00:00» человекочитаемо: до секунды — в мс (+1 мс), от секунды — в
+// секундах (+2,0 с). null → прочерк.
+function fmtOffset(ms) {
+  if (ms == null) return '<i>—</i>';
+  const sign = ms >= 0 ? '+' : '';
+  if (Math.abs(ms) < 1000) return `<b>${sign}${ms} мс</b>`;
+  return `<b>${sign}${(ms / 1000).toFixed(1).replace('.', ',')} с</b>`;
+}
+
+// Длительность без знака (для разрыва между заявками): «2,0 с» / «1500 мс».
+function fmtDuration(ms) {
+  if (ms == null) return '—';
+  return Math.abs(ms) < 1000 ? `${ms} мс` : `${(ms / 1000).toFixed(1).replace('.', ',')} с`;
+}
+
+// Времена заявок аккаунта «от 00:00» (массив). Бэк-компат: если нет submitTimesMs,
+// берём единственное submitMs (только 1-я заявка).
+function submitTimes(r) {
+  if (Array.isArray(r.submitTimesMs) && r.submitTimesMs.length) return r.submitTimesMs;
+  return r.submitMs != null ? [r.submitMs] : [];
+}
+
+// Тайминг подачи для разработчика: точность выстрела + время КАЖДОЙ заявки (1-й и
+// 2-й) по КАЖДОМУ аккаунту. Отдельным сообщением, только dev.
 export function timingNotice({ drift, results = [], dryRun } = {}) {
   const lines = [`<b>⏱ Тайминг подачи (00:00)</b>${dryRun ? ' <i>(тест)</i>' : ''}`, ''];
   if (drift != null) {
     lines.push(`Точность выстрела: <b>${drift >= 0 ? '+' : ''}${drift} мс</b> от 00:00:00.000`);
   }
   for (const r of results) {
-    const ms = r.submitMs != null ? `<b>${r.submitMs >= 0 ? '+' : ''}${r.submitMs} мс</b>` : '<i>—</i>';
-    lines.push(`${esc(r.fio || r.tag)}: ${ms}`);
+    lines.push(`<b>${esc(r.fio || r.tag)}</b>`);
+    const times = submitTimes(r);
+    if (times.length === 0) {
+      lines.push('  заявок не было');
+    } else {
+      times.forEach((ms, i) => lines.push(`  ${i + 1}-я заявка: ${fmtOffset(ms)} от 00:00`));
+    }
   }
+  return lines.join('\n');
+}
+
+// Персональный тайминг для жены/мужа: время ИХ собственной подачи (1-я и 2-я заявка)
+// «от 00:00». Шлётся индивидуально на их роль после успешной подачи их кабинета.
+export function accountTimingNotice(r, { date, dryRun } = {}) {
+  const when = bookingDateShort(r.booking?.date || r.date || date);
+  const n = r.count || config.site.bookingsPerAccount;
+  const lines = [
+    `<b>⏱ Время вашей подачи</b>${dryRun ? ' <i>(тест)</i>' : ''}`,
+    '',
+    `<b>${esc(r.fio || r.tag)}</b> — ${n} ${placesWord(n)} на <b>${esc(when)}</b>`,
+  ];
+  const times = submitTimes(r);
+  times.forEach((ms, i) => {
+    const gap = i > 0 && times[i - 1] != null && ms != null ? ` <i>(через ${fmtDuration(ms - times[i - 1])} после первой)</i>` : '';
+    lines.push(`${i + 1}-я заявка: ${fmtOffset(ms)} от 00:00${gap}`);
+  });
   return lines.join('\n');
 }
 
