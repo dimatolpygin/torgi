@@ -72,11 +72,11 @@ export const config = {
     warmAheadMs: Number(process.env.WARM_AHEAD_MS || 4000),
     // Разнос второй+ заявки по времени (этап 17, маскировка): 1-я заявка уходит в 00:00
     // (гонка не страдает), каждая следующая — после паузы в этом диапазоне (мс).
-    // По решению клиентки разрыв ФИКСИРОВАННЫЙ — строго 2 с (min=max). Если задать
-    // min<max — пауза станет случайной из диапазона. При BOOKINGS_PER_ACCOUNT=1 не влияет.
+    // По решению клиентки разрыв ФИКСИРОВАННЫЙ — 1 с (min=max). Если задать min<max —
+    // пауза станет случайной из диапазона. При BOOKINGS_PER_ACCOUNT=1 не влияет.
     submitGap: {
-      minMs: Math.max(0, Number(process.env.SUBMIT_GAP_MIN_MS || 2000)),
-      maxMs: Math.max(0, Number(process.env.SUBMIT_GAP_MAX_MS || 2000)),
+      minMs: Math.max(0, Number(process.env.SUBMIT_GAP_MIN_MS || 1000)),
+      maxMs: Math.max(0, Number(process.env.SUBMIT_GAP_MAX_MS || 1000)),
     },
     // Пауза перед ПОВТОРНОЙ вычиткой ЛК (мс), если сразу после подачи там видно
     // меньше мест, чем принял сервер. ЛК отстаёт на секунды — это даёт ему догнать
