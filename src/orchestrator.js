@@ -22,7 +22,9 @@ async function runForContext(ctx, notifier) {
   if (first.success) return withFio(first);
 
   let alerted = false;
-  const retried = await retryUntil((n) => attemptForAccount(ctx, n), {
+  // attempt = n + 1 (старт со 2): долбёжка идёт ПОЛНЫМ путём (чтение рынка), где есть
+  // защита isDone от повторной подачи. Быстрый путь (attempt===1) — только выстрел в 00:00.
+  const retried = await retryUntil((n) => attemptForAccount(ctx, n + 1), {
     onPossibleBlock: (streak) => {
       if (alerted) return;
       alerted = true;

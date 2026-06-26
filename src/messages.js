@@ -174,6 +174,11 @@ export function outcomeText(r, date) {
   if (r.success && r.dryRun) {
     return `<i>тест — собрано ${n} ${placesWord(n)} на ${when} (в рабочем режиме ушли бы на сайт)</i>`;
   }
+  // Приняты сервером, но в ЛК пока подтвердилось меньше — честно помечаем (дубли не шлём).
+  if (r.success && r.pendingConfirm) {
+    const acc = r.acceptedCount || n;
+    return `🟢 заявки приняты сайтом (<b>${acc} ${placesWord(acc)}</b>) на <b>${when}</b> — <i>подтверждение в кабинете догоняет, проверьте утром</i>`;
+  }
   if (r.success) return `🟢 забронировано <b>${n} ${placesWord(n)}</b> на <b>${when}</b>`;
   if (r.reason === 'partial') {
     return `🟡 взято ${r.count} из ${target} ${placesWord(target)} на ${when} — <u>добавьте недостающее вручную</u>`;

@@ -144,29 +144,54 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
 
   const acceptedCount = subs.filter((s) => s.accepted).length;
   if (acceptedCount === 0) {
+    // Сервер не принял ничего (нет даты/отклонение) — брони не создано, долбёжка уместна.
     alog(tag, `попытка ${attempt}: сервер отклонил все ${n} (code=${subs[0]?.response?.code})`, 'warn');
     return { tag, success: false, reason: 'rejected', response: subs[0]?.response, date: dateStr, submitTimesMs };
   }
 
-  // Верификация по факту в ЛК (после подачи, вне «горячего» окна): сколько броней
-  // на нужную дату (Комаровский, овощи).
-  const bookings = await getBookings(client);
-  const found = bookings.filter(
-    (b) => b.date === dateStr && b.market.includes('Комаровский') && b.assort.includes('овощи'),
-  );
-  // Подавали — больше в эту ночь по дате не повторяем (стоп долбёжки).
-  if (acceptedCount > 0) await markDone(tag, dateStr);
+  // Сервер принял заявки (code=201) — они ПОДАНЫ. Это и есть успех: повторную подачу
+  // НЕ делаем, иначе при отставании ЛК уйдут дубли (баг ночи 26.06). markDone закрывает
+  // долбёжку по дате. Чтение ЛК ниже — только для отчёта (сколько реально подтвердилось).
+  await markDone(tag, dateStr);
+
+  // ЛК (страница с десятками броней) сразу после подачи может отставать. Если видно
+  // меньше, чем принял сервер, — одна короткая ПОВТОРНАЯ ВЫЧИТКА (без повторной подачи).
+  let found = await findBookings(client, dateStr);
+  if (found.length < n && config.timing.verifyRereadMs > 0) {
+    await sleep(config.timing.verifyRereadMs);
+    found = await findBookings(client, dateStr);
+  }
 
   if (found.length >= n) {
     alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
-    return { tag, success: true, date: dateStr, count: found.length, booking: found[0], submitTimesMs };
+    return { tag, success: true, date: dateStr, count: found.length, booking: found[0], acceptedCount, submitTimesMs };
   }
-  if (found.length > 0) {
-    alog(tag, `⚠ частично: в ЛК ${found.length} из ${n} мест на ${dateStr} (сервер принял ${acceptedCount})`, 'warn');
-    return { tag, success: false, reason: 'partial', date: dateStr, count: found.length, submitTimesMs };
-  }
-  alog(tag, `заявки отправлены (принято ${acceptedCount}), но в ЛК на ${dateStr} ничего не подтверждено`, 'warn');
-  return { tag, success: false, reason: 'not_verified', date: dateStr, count: 0, submitTimesMs };
+  // Приняты сервером, но в ЛК пока меньше — успех (дубли не шлём!). Отчёт честно покажет
+  // «принято N, подтверждено M»; клиент при желании добивает вручную.
+  alog(
+    tag,
+    `заявки приняты сайтом (${acceptedCount} из ${n}), в ЛК подтверждено ${found.length} — повтор НЕ делаю (во избежание дублей)`,
+    'warn',
+  );
+  return {
+    tag,
+    success: true,
+    date: dateStr,
+    count: Math.max(found.length, acceptedCount),
+    confirmed: found.length,
+    acceptedCount,
+    pendingConfirm: found.length < n,
+    booking: found[0],
+    submitTimesMs,
+  };
+}
+
+// Брони на конкретную дату в ЛК (Комаровский, овощи).
+async function findBookings(client, dateStr) {
+  const bookings = await getBookings(client);
+  return bookings.filter(
+    (b) => b.date === dateStr && b.market.includes('Комаровский') && b.assort.includes('овощи'),
+  );
 }
 
 // Одна попытка подачи для подготовленного аккаунта.

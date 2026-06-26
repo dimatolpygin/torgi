@@ -78,6 +78,10 @@ export const config = {
       minMs: Math.max(0, Number(process.env.SUBMIT_GAP_MIN_MS || 2000)),
       maxMs: Math.max(0, Number(process.env.SUBMIT_GAP_MAX_MS || 2000)),
     },
+    // Пауза перед ПОВТОРНОЙ вычиткой ЛК (мс), если сразу после подачи там видно
+    // меньше мест, чем принял сервер. ЛК отстаёт на секунды — это даёт ему догнать
+    // БЕЗ повторной подачи (повторная подача = дубли). 0 — без перечитки.
+    verifyRereadMs: Math.max(0, Number(process.env.VERIFY_REREAD_MS || 1500)),
     // Сухой прогон: не отправлять реальную заявку
     dryRun: process.env.DRY_RUN !== 'false',
   },
