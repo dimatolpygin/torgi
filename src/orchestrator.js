@@ -13,12 +13,11 @@ import { blockAlertBody, runFailureBody, preflightNotice, timingNotice, accountT
 async function runForContext(ctx, notifier) {
   const withFio = (r) => ({ ...r, fio: ctx.fio });
 
-  const first = await attemptForAccount(ctx, 1).catch((e) => ({
-    tag: ctx.tag,
-    success: false,
-    reason: 'error',
-    error: e,
-  }));
+  const first = await attemptForAccount(ctx, 1).catch((e) => {
+    // Раньше сбой первой попытки глотался молча (так и не увидели причину бага 26.06).
+    logger.warn(`[${ctx.tag}] первая попытка завершилась ошибкой: ${e.message}`);
+    return { tag: ctx.tag, success: false, reason: 'error', error: e };
+  });
   if (first.success) return withFio(first);
 
   let alerted = false;

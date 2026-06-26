@@ -29,14 +29,16 @@ function accountHtml(count) {
   return `<table id="zajav">${rows}</table>`;
 }
 
-// lcSeq — что показывает ЛК при последовательных чтениях; code — ответ create_zajav.
-function makeClient({ lcSeq = [2], code = '201' } = {}) {
+// lcSeq — что показывает ЛК при последовательных чтениях; code — ответ create_zajav;
+// getThrows — чтение ЛК (account-страница) бросает исключение (транзиентный сбой).
+function makeClient({ lcSeq = [2], code = '201', getThrows = false } = {}) {
   let getIdx = 0;
   const calls = { create: 0 };
   return {
     calls,
     cookies: {},
     async get() {
+      if (getThrows) throw new Error('ЛК недоступен (транзиентный сбой)');
       const c = lcSeq[Math.min(getIdx, lcSeq.length - 1)];
       getIdx++;
       return { status: 200, text: accountHtml(c) };
@@ -91,6 +93,13 @@ async function main() {
   check('сервер отклонил: success=false, reason=rejected (долбёжка уместна)',
     r3.success === false && r3.reason === 'rejected',
     `success=${r3.success}, reason=${r3.reason}`);
+
+  // --- 4: чтение ЛК БРОСАЕТ исключение (реальный случай мужа 26.06) ---
+  const c4 = makeClient({ getThrows: true });
+  const r4 = await attemptForAccount(makeCtx(c4), 1);
+  check('сбой чтения ЛК: успех (приняты сервером), отправлено ровно 2 (НЕ молчит, НЕ дублит)',
+    r4.success === true && r4.pendingConfirm === true && c4.calls.create === 2,
+    `success=${r4.success}, pendingConfirm=${r4.pendingConfirm}, отправлено=${c4.calls.create}`);
 
   logger.info(ok ? '✅ Фикс 26.06: приём = успех, ЛК-лаг не плодит дубли' : '❌ Фикс 26.06: есть проблемы');
   process.exit(ok ? 0 : 1);

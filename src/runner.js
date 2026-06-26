@@ -154,12 +154,19 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
   // долбёжку по дате. Чтение ЛК ниже — только для отчёта (сколько реально подтвердилось).
   await markDone(tag, dateStr);
 
-  // ЛК (страница с десятками броней) сразу после подачи может отставать. Если видно
-  // меньше, чем принял сервер, — одна короткая ПОВТОРНАЯ ВЫЧИТКА (без повторной подачи).
-  let found = await findBookings(client, dateStr);
-  if (found.length < n && config.timing.verifyRereadMs > 0) {
-    await sleep(config.timing.verifyRereadMs);
+  // ЛК (страница с десятками броней) сразу после подачи может отставать ИЛИ чтение
+  // может сбойнуть (транзиентный сетевой сбой — это и был баг ночи 26.06 у мужа).
+  // Проверка ЛК полностью НЕОБЯЗАТЕЛЬНА: ошибка/недобор не отменяет успех (заявки уже
+  // приняты сервером) и НЕ запускает повторную подачу. При недоборе — одна перечитка.
+  let found = [];
+  try {
     found = await findBookings(client, dateStr);
+    if (found.length < n && config.timing.verifyRereadMs > 0) {
+      await sleep(config.timing.verifyRereadMs);
+      found = await findBookings(client, dateStr);
+    }
+  } catch (e) {
+    alog(tag, `чтение ЛК для подтверждения не удалось (${e.message}) — заявки приняты сервером, считаю поданными`, 'warn');
   }
 
   if (found.length >= n) {
