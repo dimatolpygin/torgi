@@ -124,6 +124,16 @@ export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhea
       const canc = mc.cancelled ? `, отменено дублей: ${mc.cancelled}` : '';
       lines.push(`  мультиконнект: ${mc.k} сокет(ов), принято ${mc.acceptedCount}, победил ${won}${canc}`);
     }
+    // Развязка выстрелов (этап 23): места шли параллельно, каждое на своём сокете.
+    if (r.parallel && r.parallel.n > 1) {
+      lines.push(`  развязка: ${r.parallel.n} мест по ${r.parallel.n} сокетам параллельно`);
+    }
+    // Реальное время ответа сервера на подачу (этап 23): большое значение при малой метке
+    // отправки = залип POST (медленный ответ Apache), который раньше был не виден.
+    if (r.maxResponseMs != null) {
+      const slow = r.maxResponseMs >= 1000 ? ' ⚠ медленный ответ сервера' : '';
+      lines.push(`  ответ сервера на подачу: ${r.maxResponseMs} мс${slow}`);
+    }
   }
   return lines.join('\n');
 }

@@ -29,6 +29,43 @@ function maskGapMs() {
   return lo + Math.floor(Math.random() * (hi - lo + 1));
 }
 
+// Маскировка выключена (этап 22: gap=0 → обе заявки в гонку, без паузы).
+function gapDisabled() {
+  return config.timing.submitGap.maxMs <= 0;
+}
+
+// Режим «развязки выстрелов» (этап 23): N мест в гонку, каждое на своём сокете.
+// Только боевой режим (dry-run шлёт мгновенно — сокеты не нужны), gap=0 и >1 места.
+function placesParallel() {
+  return !config.timing.dryRun && gapDisabled() && config.site.bookingsPerAccount > 1;
+}
+
+// Сколько тёплых сокетов провизионить на аккаунт: максимум из потребностей
+// мультиконнекта (этап 21, K для места №1) и развязки выстрелов (этап 23, по сокету
+// на каждое из N мест при gap=0).
+function computeSocketsNeeded() {
+  const forMulticonnect = config.multiconnect.k;
+  const forParallel = placesParallel() ? config.site.bookingsPerAccount : 1;
+  return Math.max(1, forMulticonnect, forParallel);
+}
+
+// Один выстрел create_zajav: фиксируем метку отправки «от 00:00» (ДО POST — это и есть
+// момент, когда заявка ушла) и РЕАЛЬНОЕ время ответа сервера (responseMs). Раньше в
+// отчёте была только предотправочная метка, поэтому залип POST (медленный ответ Apache
+// в полуночный наплыв) был не виден — метка 1-й заявки показывала «+1 мс», хотя ответ
+// пришёл через секунды (баг +8 с 12.07). Исключение POST не валит залп — возвращаем
+// отклонённый выстрел с кодом ошибки.
+async function fireShot(ctx, client, payload, { dryRun }) {
+  const sentMs = ctx.targetMs != null ? Date.now() - ctx.targetMs : null;
+  const t0 = Date.now();
+  try {
+    const sub = await submitOrder(client, payload, { dryRun });
+    return { accepted: !!sub.accepted, code: sub.response?.code, sub, sentMs, responseMs: Date.now() - t0 };
+  } catch (e) {
+    return { accepted: false, code: `err:${e.message}`, error: e, sentMs, responseMs: Date.now() - t0 };
+  }
+}
+
 // Прогрев аккаунта (этап 12): всё, что можно сделать заранее, чтобы в 00:00 ушёл
 // единственный запрос — create_zajav. Заранее тянем поля формы и тип места, и
 // кладём предвычисленную дату брони в ctx. Сбой прогрева не критичен — в 00:00
@@ -51,7 +88,7 @@ async function warmupAccount(ctx, predicted) {
     }
     alog(
       tag,
-      `прогрет: поля формы загружены, тип места=${ctx.defaultType}, дата брони (прогноз)=${predicted.dateStr}${extras.length ? `, соединений мультиконнекта=${ctx.clients.length}` : ''} — в 00:00 уйдёт только подача`,
+      `прогрет: поля формы загружены, тип места=${ctx.defaultType}, дата брони (прогноз)=${predicted.dateStr}${extras.length ? `, тёплых соединений=${ctx.clients.length}` : ''} — в 00:00 уйдёт только подача`,
     );
   } catch (e) {
     alog(tag, `прогрев не удался (${e.message}) — в 00:00 пойдёт полный путь`, 'warn');
@@ -116,11 +153,17 @@ export async function prepareAccount(account, { predicted } = {}) {
       ctx = { account, tag, client, loggedIn, fio };
     }
 
-    // Мультиконнект (этап 21): готовим K соединений на аккаунт. Доп-сокеты делят одну
-    // сессию (кука gorodid скопирована), но живут на своих TCP-сокетах. K=1 → просто [client].
+    // Сколько тёплых сокетов держать на аккаунт. Доп-сокеты делят одну сессию (кука
+    // gorodid скопирована), но живут на своих TCP-сокетах — как браузер:
+    //  - мультиконнект (этап 21): K сокетов для гоночного залпа места №1;
+    //  - развязка выстрелов (этап 23): при gap=0 («обе в гонку», этап 22) — по сокету на
+    //    КАЖДОЕ место, чтобы залип POST одного места не тормозил остальные. undici.Client —
+    //    это одно соединение, параллельные запросы на нём сериализуются; поэтому 2-е место
+    //    должно уходить на своём сокете, иначе оно ждёт round-trip 1-го (баг +8 с 12.07).
     ctx.clients = [ctx.client];
-    if (ctx.loggedIn && config.multiconnect.k > 1) {
-      for (let i = 1; i < config.multiconnect.k; i++) {
+    const socketsNeeded = ctx.loggedIn ? computeSocketsNeeded() : 1;
+    if (ctx.loggedIn && socketsNeeded > 1) {
+      for (let i = 1; i < socketsNeeded; i++) {
         const extra = new SiteClient();
         for (const [k, v] of ctx.client.cookies) extra.cookies.set(k, v);
         ctx.clients.push(extra);
@@ -150,18 +193,28 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
   const n = config.site.bookingsPerAccount;
   const dryRun = config.timing.dryRun;
 
-  // Мультиконнект (этап 21): место №1 гоночным залпом по K сокетам. Только боевой режим
-  // и когда реально подготовлено >1 соединения. Dry-run/одиночный сокет → обычный путь.
+  // Мультиконнект (этап 21): место №1 гоночным залпом по K сокетам. Приоритетнее развязки
+  // ниже: при K>1 работает гоночный залп места №1 (расширение залпа на ОБА места — задача
+  // этапа 22). Только боевой режим и когда реально подготовлено >1 соединения.
   if (!dryRun && config.multiconnect.k > 1 && (ctx.clients?.length || 1) > 1) {
     return submitBookingsMulti(ctx, attempt, payload, dateStr, n);
   }
 
+  // Развязка выстрелов (этап 23): обе (N) заявки в гонку без маскировки (gap=0, этап 22)
+  // и без мультиконнекта (K=1) — каждая на СВОЁМ тёплом сокете, параллельно, чтобы залип
+  // POST одного места не сдвигал остальные (баг +8 с 12.07). Требует N провизионированных
+  // сокетов (computeSocketsNeeded).
+  if (!dryRun && placesParallel() && n > 1 && (ctx.clients?.length || 1) >= n) {
+    return submitBookingsParallel(ctx, attempt, payload, dateStr, n);
+  }
+
   // N заявок = N слотов на одну дату. 1-я уходит сразу в 00:00 (гонка не страдает);
   // каждая следующая — после паузы-маскировки (этап 17), чтобы в утренних списках
-  // админов не было «мгновенного дубля» одного имени. Время каждой заявки «от 00:00»
-  // фиксируем (submitTimesMs) для отчёта тайминга жене/мужу/разработчику (этап 18).
-  const subs = [];
-  const submitTimesMs = [];
+  // админов не было «мгновенного дубля» одного имени. Пауза отсчитывается от МОМЕНТА
+  // ОТПРАВКИ предыдущей (не её ответа) — видимый разрыв сохраняется, но метка следующей
+  // заявки не впитывает round-trip предыдущей. Время каждой заявки «от 00:00» фиксируем
+  // (submitTimesMs) для отчёта тайминга жене/мужу/разработчику (этап 18).
+  const shots = [];
   for (let i = 0; i < n; i++) {
     if (i > 0) {
       const gap = maskGapMs();
@@ -170,15 +223,16 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
         await sleep(gap);
       }
     }
-    submitTimesMs.push(ctx.targetMs != null ? Date.now() - ctx.targetMs : null);
-    subs.push(await submitOrder(client, payload, { dryRun }));
+    shots.push(await fireShot(ctx, client, payload, { dryRun }));
   }
+  const submitTimesMs = shots.map((s) => s.sentMs);
 
   if (dryRun) {
     alog(tag, `попытка ${attempt}: dry-run, собрано ${n} заявк(и) на ${dateStr}`);
     return { tag, success: true, dryRun: true, date: dateStr, count: n, submitTimesMs };
   }
 
+  const subs = shots.map((s) => s.sub || { accepted: s.accepted, response: { code: s.code } });
   const acceptedCount = subs.filter((s) => s.accepted).length;
   if (acceptedCount === 0) {
     // Сервер не принял ничего (нет даты/отклонение) — брони не создано, долбёжка уместна.
@@ -227,6 +281,74 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
     pendingConfirm: found.length < n,
     booking: found[0],
     submitTimesMs,
+  };
+}
+
+// Подача с развязкой выстрелов (этап 23): N мест в гонку, каждое место — на СВОЁМ
+// тёплом сокете, все N уходят ПАРАЛЛЕЛЬНО (Promise.all). Залип/медленный ответ одного
+// сокета не сдвигает метку остальных — тем самым устранён баг «+8 с у 2-й заявки»
+// (12.07: 2-я заявка ждала round-trip 1-й на общем сокете). Верификация ЛК — как в
+// submitBookings (необязательна; сбой не отменяет успех). Дублей нет: N сокетов = N мест
+// (лимит сайта), лишнее (если сервер не срезал) срезаем до N.
+async function submitBookingsParallel(ctx, attempt, payload, dateStr, n) {
+  const { tag } = ctx;
+  const clients = ctx.clients;
+
+  const shots = await Promise.all(
+    Array.from({ length: n }, (_, i) => fireShot(ctx, clients[i], payload, { dryRun: false })),
+  );
+  const submitTimesMs = shots.map((s) => s.sentMs);
+  const acceptedCount = shots.filter((s) => s.accepted).length;
+  const maxResp = Math.max(0, ...shots.map((s) => s.responseMs ?? 0));
+  const spread = shots
+    .map((s) => (s.sentMs != null ? `${s.sentMs >= 0 ? '+' : ''}${s.sentMs}` : '—'))
+    .join('/');
+  alog(
+    tag,
+    `этап 23: залп ${n} мест по ${n} сокетам параллельно — принято ${acceptedCount}/${n}, отправка [${spread}] мс, макс. ответ ${maxResp} мс`,
+  );
+
+  if (acceptedCount === 0) {
+    alog(tag, `попытка ${attempt}: сервер отклонил все ${n} (code=${shots[0]?.code})`, 'warn');
+    return { tag, success: false, reason: 'rejected', response: { code: shots[0]?.code }, date: dateStr, submitTimesMs, maxResponseMs: maxResp };
+  }
+
+  // Приняты сервером = поданы (закрываем долбёжку по дате).
+  await markDone(tag, dateStr);
+
+  // Верификация ЛК (необязательна). Если создано БОЛЬШЕ N (сервер не срезал на лимите) —
+  // срезаем до N, чтобы в ЛК осталось ровно нужное.
+  let found = [];
+  try {
+    found = await findBookings(ctx.client, dateStr);
+    if (found.length < n && config.timing.verifyRereadMs > 0) {
+      await sleep(config.timing.verifyRereadMs);
+      found = await findBookings(ctx.client, dateStr);
+    }
+  } catch (e) {
+    alog(tag, `чтение ЛК не удалось (${e.message}) — заявки приняты сервером, считаю поданными`, 'warn');
+  }
+  let cancelled = 0;
+  if (found.length > n) {
+    cancelled = await cancelExcessBookings(ctx, dateStr, n).catch((e) => {
+      alog(tag, `отмена лишних броней не удалась (${e.message}) — проверьте ЛК`, 'warn');
+      return 0;
+    });
+    found = await findBookings(ctx.client, dateStr).catch(() => found);
+  }
+
+  const base = { tag, success: true, date: dateStr, acceptedCount, submitTimesMs, maxResponseMs: maxResp, parallel: { n, acceptedCount, maxResponseMs: maxResp, cancelled } };
+  if (found.length >= n) {
+    alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
+    return { ...base, count: found.length, booking: found[0] };
+  }
+  alog(tag, `этап 23: принято сайтом ${acceptedCount}, в ЛК подтверждено ${found.length} из ${n} — повтор НЕ делаю`, 'warn');
+  return {
+    ...base,
+    count: Math.max(found.length, acceptedCount),
+    confirmed: found.length,
+    pendingConfirm: found.length < n,
+    booking: found[0],
   };
 }
 
