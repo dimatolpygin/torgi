@@ -6,6 +6,8 @@ import { prepareAll, attemptForAccount, closeAll, buildDateStr, warmConnection }
 import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
 import { blockAlertBody, runFailureBody, preflightNotice, timingNotice, accountTimingNotice } from './messages.js';
+import { SiteClient } from './site/client.js';
+import { measureSiteClockOffset, formatClockOffset } from './site/clock.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -90,6 +92,21 @@ export async function runNightly(
       .catch(() => {});
   }
 
+  // Часы vs сайт (этап 19): на ОТДЕЛЬНОМ лёгком клиенте (боевые сокеты не трогаем)
+  // меряем смещение часов сайта относительно наших (ntp-дисциплинированных) по
+  // заголовку Date + RTT. Наши часы точны (<0.1 мс от UTC), поэтому это ≈ «часы сайта
+  // vs истинный UTC». Диагностика для отчёта dev; сбой замера подачу не затрагивает.
+  // Делаем заранее (за leadSeconds до 00:00), задолго до критического окна выстрела.
+  let clock = null;
+  try {
+    const probe = new SiteClient();
+    clock = await measureSiteClockOffset(probe, { durationMs: 2500, gapMs: 20, maxFlips: 3 });
+    await probe.close().catch(() => {});
+    logger.info(`🕐 Часы vs сайт: ${formatClockOffset(clock)}`);
+  } catch (e) {
+    logger.warn(`Замер часов сайта не удался (${e.message}) — пропускаю`);
+  }
+
   // Тёплое соединение за warmAheadMs до полуночи (этап 14): «оживляем» сокет,
   // чтобы create_zajav в 00:00 ушёл по горячему TLS за 1 RTT. Завершаем заранее,
   // чтобы запрос не висел на единственном соединении в момент выстрела.
@@ -130,7 +147,7 @@ export async function runNightly(
   // Тайминг подачи разработчику — точность выстрела + время КАЖДОЙ заявки (1-й и 2-й)
   // по КАЖДОМУ аккаунту, одним сообщением (этап 18).
   await notifier
-    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun }))
+    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun, clock }))
     .catch(() => {});
   // Персональный тайминг жене/мужу — каждому на ЕГО кабинет (1-я и 2-я заявка),
   // только при успехе подачи этого кабинета (этап 18). Роль аккаунта берётся из

@@ -91,10 +91,16 @@ function submitTimes(r) {
 
 // Тайминг подачи для разработчика: точность выстрела + время КАЖДОЙ заявки (1-й и
 // 2-й) по КАЖДОМУ аккаунту. Отдельным сообщением, только dev.
-export function timingNotice({ drift, results = [], dryRun } = {}) {
+export function timingNotice({ drift, results = [], dryRun, clock } = {}) {
   const lines = [`<b>⏱ Тайминг подачи (00:00)</b>${dryRun ? ' <i>(тест)</i>' : ''}`, ''];
   if (drift != null) {
     lines.push(`Точность выстрела: <b>${drift >= 0 ? '+' : ''}${drift} мс</b> от 00:00:00.000`);
+  }
+  // Часы сайта vs наши (этап 19): смещение по заголовку Date + RTT. >0 → сайт спешит.
+  if (clock && clock.offsetMs != null) {
+    const s = clock.offsetMs >= 0 ? '+' : '';
+    const rtt = clock.rttMedianMs != null ? `, RTT ~${clock.rttMedianMs} мс` : '';
+    lines.push(`Часы сайта: <b>${s}${clock.offsetMs} мс</b> от наших${rtt}`);
   }
   for (const r of results) {
     lines.push(`<b>${esc(r.fio || r.tag)}</b>`);
