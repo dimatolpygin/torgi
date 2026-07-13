@@ -117,6 +117,13 @@ export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhea
     } else {
       times.forEach((ms, i) => lines.push(`  ${i + 1}-я заявка: ${fmtOffset(ms)} от 00:00`));
     }
+    // Мультиконнект (этап 21): K сокетов, сколько принято, победитель, сколько отменено.
+    const mc = r.multiconnect;
+    if (mc && mc.k > 1) {
+      const won = mc.winnerSocket != null ? `сокет #${mc.winnerSocket}` : '—';
+      const canc = mc.cancelled ? `, отменено дублей: ${mc.cancelled}` : '';
+      lines.push(`  мультиконнект: ${mc.k} сокет(ов), принято ${mc.acceptedCount}, победил ${won}${canc}`);
+    }
   }
   return lines.join('\n');
 }

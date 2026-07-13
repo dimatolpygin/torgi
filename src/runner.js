@@ -1,5 +1,6 @@
 import { DateTime } from 'luxon';
 import { login, restoreSession } from './site/auth.js';
+import { SiteClient } from './site/client.js';
 import { readMarketState, getTypeMest } from './site/market.js';
 import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
 import { getBookings } from './site/bookings.js';
@@ -7,6 +8,8 @@ import { loadSession, saveSession, markDone, isDone } from './session.js';
 import { waitUntil } from './scheduler.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
+
+const ACCOUNT_PATH = '/rinki/minsk/account/';
 
 // Логирование с префиксом аккаунта, чтобы в общем потоке было видно, кто что делает.
 function alog(tag, msg, level = 'info') {
@@ -40,9 +43,15 @@ async function warmupAccount(ctx, predicted) {
     ctx.fields = fields;
     ctx.defaultType = tm.types[0]?.value ?? 2;
     ctx.predicted = predicted;
+    // Прогрев доп-сокетов мультиконнекта (этап 21): устанавливаем TCP/TLS заранее,
+    // чтобы в 00:00 гоночный залп ушёл по всем K горячим сокетам за 1 RTT.
+    const extras = (ctx.clients || []).slice(1);
+    if (extras.length) {
+      await Promise.all(extras.map((c) => getRegFields(c).catch(() => {})));
+    }
     alog(
       tag,
-      `прогрет: поля формы загружены, тип места=${ctx.defaultType}, дата брони (прогноз)=${predicted.dateStr} — в 00:00 уйдёт только подача`,
+      `прогрет: поля формы загружены, тип места=${ctx.defaultType}, дата брони (прогноз)=${predicted.dateStr}${extras.length ? `, соединений мультиконнекта=${ctx.clients.length}` : ''} — в 00:00 уйдёт только подача`,
     );
   } catch (e) {
     alog(tag, `прогрев не удался (${e.message}) — в 00:00 пойдёт полный путь`, 'warn');
@@ -55,9 +64,19 @@ async function warmupAccount(ctx, predicted) {
 // освежает поля формы. В 00:00 create_zajav уходит по горячему сокету за 1 RTT.
 export async function warmConnection(ctx) {
   if (!ctx?.loggedIn || !ctx.client) return;
+  const clients = ctx.clients || [ctx.client];
   try {
-    ctx.fields = await getRegFields(ctx.client);
-    alog(ctx.tag, 'соединение прогрето перед 00:00 (поля освежены)');
+    // Освежаем поля на основном сокете; доп-сокеты мультиконнекта просто прогреваем
+    // (устанавливаем/держим горячим TCP/TLS) и обновляем на них общую куку сессии.
+    const fields = await getRegFields(ctx.client);
+    ctx.fields = fields;
+    if (clients.length > 1) {
+      await Promise.all(clients.slice(1).map((c) => getRegFields(c).catch(() => {})));
+      for (const c of clients.slice(1)) {
+        for (const [k, v] of ctx.client.cookies) c.cookies.set(k, v);
+      }
+    }
+    alog(ctx.tag, `соединени${clients.length > 1 ? `я (${clients.length}) прогреты` : 'е прогрето'} перед 00:00 (поля освежены)`);
   } catch (e) {
     alog(ctx.tag, `прогрев соединения не удался (${e.message}) — выстрел по как есть`, 'warn');
   }
@@ -97,6 +116,17 @@ export async function prepareAccount(account, { predicted } = {}) {
       ctx = { account, tag, client, loggedIn, fio };
     }
 
+    // Мультиконнект (этап 21): готовим K соединений на аккаунт. Доп-сокеты делят одну
+    // сессию (кука gorodid скопирована), но живут на своих TCP-сокетах. K=1 → просто [client].
+    ctx.clients = [ctx.client];
+    if (ctx.loggedIn && config.multiconnect.k > 1) {
+      for (let i = 1; i < config.multiconnect.k; i++) {
+        const extra = new SiteClient();
+        for (const [k, v] of ctx.client.cookies) extra.cookies.set(k, v);
+        ctx.clients.push(extra);
+      }
+    }
+
     // Прогрев только для залогиненного аккаунта и когда известна целевая дата.
     if (ctx.loggedIn && predicted) await warmupAccount(ctx, predicted);
     return ctx;
@@ -119,6 +149,12 @@ async function submitBookings(ctx, attempt, payload, dateStr) {
   const { tag, client } = ctx;
   const n = config.site.bookingsPerAccount;
   const dryRun = config.timing.dryRun;
+
+  // Мультиконнект (этап 21): место №1 гоночным залпом по K сокетам. Только боевой режим
+  // и когда реально подготовлено >1 соединения. Dry-run/одиночный сокет → обычный путь.
+  if (!dryRun && config.multiconnect.k > 1 && (ctx.clients?.length || 1) > 1) {
+    return submitBookingsMulti(ctx, attempt, payload, dateStr, n);
+  }
 
   // N заявок = N слотов на одну дату. 1-я уходит сразу в 00:00 (гонка не страдает);
   // каждая следующая — после паузы-маскировки (этап 17), чтобы в утренних списках
@@ -200,6 +236,128 @@ async function findBookings(client, dateStr) {
   return bookings.filter(
     (b) => b.date === dateStr && b.market.includes('Комаровский') && b.assort.includes('овощи'),
   );
+}
+
+// Отменить лишние брони на дату, оставив keep штук (этап 21). Гоночный залп мог создать
+// больше приёмов, чем нужно (если сервер не срезал на лимите) — снимаем лишнее, чтобы в
+// ЛК осталось ровно нужное и не сломалась маскировка. Реверс AJAX: POST account/
+// {ID_USER, ACTION:del, LIST}. Возвращает число реально отменённых.
+async function cancelExcessBookings(ctx, dateStr, keep) {
+  const client = ctx.client;
+  const mine = await findBookings(client, dateStr);
+  if (mine.length <= keep) return 0;
+  const page = await client.get(ACCOUNT_PATH, { followRedirect: true });
+  const idUser =
+    page.text.match(/name="id_user"[^>]*value="([^"]+)"/i)?.[1] ||
+    page.text.match(/id="id_user"[^>]*value="([^"]+)"/i)?.[1];
+  if (!idUser) {
+    alog(ctx.tag, 'отмена лишних: не нашёл id_user на странице ЛК — оставляю как есть', 'warn');
+    return 0;
+  }
+  const toCancel = mine.slice(keep); // оставить первые keep, отменить остальные
+  const LIST = JSON.stringify(Object.fromEntries(toCancel.map((b, i) => [i, String(b.key)])));
+  await client.post(
+    ACCOUNT_PATH,
+    { ID_USER: idUser, ACTION: 'del', LIST },
+    { headers: { 'x-requested-with': 'XMLHttpRequest', referer: 'https://gorod.it-minsk.by' + ACCOUNT_PATH } },
+  );
+  alog(ctx.tag, `мультиконнект: отменил ${toCancel.length} лишн(юю/их) бронь(и) на ${dateStr} (дубли залпа)`);
+  return toCancel.length;
+}
+
+// Подача с мультиконнектом (этап 21): место №1 гоночным залпом одинаковой заявки по
+// всем K сокетам параллельно — берём ПЕРВЫЙ принятый (min по времени прилёта), лишние
+// приёмы гасим отменой (keep=1). Места №2..N — как обычно: маскированные одиночные
+// выстрелы на основном сокете. Верификация ЛК — как в submitBookings.
+async function submitBookingsMulti(ctx, attempt, payload, dateStr, n) {
+  const { tag } = ctx;
+  const clients = ctx.clients;
+  const K = clients.length;
+
+  // Гоночный залп места №1 по всем K сокетам. Ждём ВСЕ ответы (нужно посчитать приёмы
+  // для гашения дублей), но «победитель» = самый быстрый принятый.
+  const burst = await Promise.all(
+    clients.map(async (client, i) => {
+      let sub;
+      try {
+        sub = await submitOrder(client, payload, { dryRun: false });
+      } catch (e) {
+        return { i, accepted: false, code: `err:${e.message}`, ms: null };
+      }
+      return { i, accepted: !!sub.accepted, code: sub.response?.code, ms: ctx.targetMs != null ? Date.now() - ctx.targetMs : null };
+    }),
+  );
+  const accepted = burst.filter((b) => b.accepted).sort((a, b) => (a.ms ?? 1e9) - (b.ms ?? 1e9));
+  const acceptedCount = accepted.length;
+  const winner = accepted[0] || null;
+  const submitTimesMs = [winner ? winner.ms : null];
+  alog(
+    tag,
+    `мультиконнект: залп по ${K} сокетам, принято ${acceptedCount}, победитель сокет #${winner ? winner.i : '—'}${winner && winner.ms != null ? ` на ${winner.ms >= 0 ? '+' : ''}${winner.ms} мс` : ''}`,
+  );
+
+  if (acceptedCount === 0) {
+    alog(tag, `попытка ${attempt}: мультиконнект — сервер отклонил все ${K} (code=${burst[0]?.code})`, 'warn');
+    return { tag, success: false, reason: 'rejected', response: { code: burst[0]?.code }, date: dateStr, submitTimesMs, multiconnect: { k: K, acceptedCount: 0, winnerMs: null, cancelled: 0 } };
+  }
+
+  // Приняты сервером = поданы (закрываем долбёжку по дате).
+  await markDone(tag, dateStr);
+
+  // Гасим лишние приёмы залпа: место №1 — одно. Оставляем 1, остальное отменяем.
+  let cancelled = 0;
+  if (acceptedCount > 1) {
+    cancelled = await cancelExcessBookings(ctx, dateStr, 1).catch((e) => {
+      alog(tag, `отмена лишних броней не удалась (${e.message}) — проверьте ЛК`, 'warn');
+      return 0;
+    });
+  }
+
+  // Места №2..N — как обычно: маскированные одиночные выстрелы на основном сокете.
+  for (let i = 1; i < n; i++) {
+    const gap = maskGapMs();
+    if (gap > 0) {
+      alog(tag, `маскировка: пауза ${gap} мс перед заявкой ${i + 1} из ${n}`);
+      await sleep(gap);
+    }
+    try {
+      await submitOrder(ctx.client, payload, { dryRun: false });
+    } catch (e) {
+      alog(tag, `заявка ${i + 1} из ${n} не ушла (${e.message})`, 'warn');
+    }
+    submitTimesMs.push(ctx.targetMs != null ? Date.now() - ctx.targetMs : null);
+  }
+
+  // Верификация ЛК (необязательна, как в submitBookings — сбой не отменяет успех).
+  let found = [];
+  try {
+    found = await findBookings(ctx.client, dateStr);
+    if (found.length < n && config.timing.verifyRereadMs > 0) {
+      await sleep(config.timing.verifyRereadMs);
+      found = await findBookings(ctx.client, dateStr);
+    }
+  } catch (e) {
+    alog(tag, `чтение ЛК не удалось (${e.message}) — заявки приняты сервером, считаю поданными`, 'warn');
+  }
+
+  const multi = { k: K, acceptedCount, winnerMs: winner.ms, winnerSocket: winner.i, cancelled };
+  if (found.length >= n) {
+    alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
+    return { tag, success: true, date: dateStr, count: found.length, booking: found[0], acceptedCount, submitTimesMs, multiconnect: multi };
+  }
+  alog(tag, `мультиконнект: принято сайтом, в ЛК подтверждено ${found.length} из ${n} — повтор НЕ делаю`, 'warn');
+  return {
+    tag,
+    success: true,
+    date: dateStr,
+    count: Math.max(found.length, 1),
+    confirmed: found.length,
+    acceptedCount,
+    pendingConfirm: found.length < n,
+    booking: found[0],
+    submitTimesMs,
+    multiconnect: multi,
+  };
 }
 
 // Одна попытка подачи для подготовленного аккаунта.
@@ -304,9 +462,11 @@ export async function attemptAll(contexts, attempt = 1) {
   return Promise.all(contexts.map((ctx) => attemptForAccount(ctx, attempt)));
 }
 
-// Закрыть все сессии.
+// Закрыть все сессии (включая доп-сокеты мультиконнекта).
 export async function closeAll(contexts) {
-  await Promise.all(contexts.map((ctx) => ctx.client?.close().catch(() => {})));
+  await Promise.all(
+    contexts.flatMap((ctx) => (ctx.clients || [ctx.client]).map((c) => c?.close().catch(() => {}))),
+  );
 }
 
 export { buildDateStr };
