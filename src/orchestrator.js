@@ -7,7 +7,7 @@ import { recordAttempt } from './db.js';
 import { nextRegistrationMidnight, waitUntil, fireAt, retryUntil } from './scheduler.js';
 import { blockAlertBody, runFailureBody, preflightNotice, timingNotice, accountTimingNotice } from './messages.js';
 import { SiteClient } from './site/client.js';
-import { measureSiteClockOffset, formatClockOffset } from './site/clock.js';
+import { measureSiteClockOffset, formatClockOffset, measureRtt, formatRtt } from './site/clock.js';
 
 // Подача по одному аккаунту: первая попытка в 00:00, при неуспехе — безопасная
 // долбёжка (этап 5). Серия сетевых ошибок (возможная блокировка IP) → алерт.
@@ -98,14 +98,34 @@ export async function runNightly(
   // vs истинный UTC». Диагностика для отчёта dev; сбой замера подачу не затрагивает.
   // Делаем заранее (за leadSeconds до 00:00), задолго до критического окна выстрела.
   let clock = null;
+  let rtt = null;
   try {
     const probe = new SiteClient();
     clock = await measureSiteClockOffset(probe, { durationMs: 2500, gapMs: 20, maxFlips: 3 });
+    rtt = await measureRtt(probe, { path: config.timing.rttProbePath, samples: config.timing.rttProbeSamples });
     await probe.close().catch(() => {});
     logger.info(`🕐 Часы vs сайт: ${formatClockOffset(clock)}`);
+    logger.info(`📡 ${formatRtt(rtt)}`);
   } catch (e) {
-    logger.warn(`Замер часов сайта не удался (${e.message}) — пропускаю`);
+    logger.warn(`Замер часов/RTT сайта не удался (${e.message}) — пропускаю`);
   }
+
+  // Упреждение выстрела (этап 20): стреляем на sendAhead мс РАНЬШЕ 00:00, чтобы заявка
+  // прилетела ближе к 00:00:00.000 (компенсация односторонней сетевой задержки). Дефолт 0
+  // = выключено (поведение как раньше). При sendAhead>one-way — предупреждаем (риск no_date,
+  // но сработает безопасный фолбэк повтора в 00:00). Замер «от 00:00» и фолбэк — по истинной
+  // полуночи (targetMs), стреляем по fireTargetMs.
+  const sendAhead = config.timing.sendAheadMs;
+  const fireTargetMs = targetMs - sendAhead;
+  if (sendAhead > 0) {
+    const ow = rtt?.oneWayMs;
+    const risk = ow != null && sendAhead > ow ? ' ⚠ больше one-way — риск no_date (сработает фолбэк)' : '';
+    logger.info(`🎯 Упреждение выстрела: ${sendAhead} мс (one-way ≈ ${ow != null ? ow.toFixed(1) : '?'} мс)${risk}`);
+  }
+  contexts.forEach((ctx) => {
+    ctx.trueTargetMs = targetMs; // истинная полночь — для фолбэка упреждения
+    ctx.sendAheadMs = sendAhead;
+  });
 
   // Тёплое соединение за warmAheadMs до полуночи (этап 14): «оживляем» сокет,
   // чтобы create_zajav в 00:00 ушёл по горячему TLS за 1 RTT. Завершаем заранее,
@@ -117,8 +137,9 @@ export async function runNightly(
     await Promise.all(contexts.map((ctx) => warmConnection(ctx)));
   }
 
-  // Точный выстрел в 00:00:00.000, параллельно по всем аккаунтам.
-  const { drift, result: results } = await fireAt(targetMs, () =>
+  // Точный выстрел, параллельно по всем аккаунтам. fireTargetMs = 00:00 − упреждение
+  // (этап 20); при sendAhead=0 это ровно 00:00:00.000 (прежнее поведение).
+  const { drift, result: results } = await fireAt(fireTargetMs, () =>
     Promise.all(contexts.map((ctx) => runForContext(ctx, notifier))),
   );
 
@@ -147,7 +168,7 @@ export async function runNightly(
   // Тайминг подачи разработчику — точность выстрела + время КАЖДОЙ заявки (1-й и 2-й)
   // по КАЖДОМУ аккаунту, одним сообщением (этап 18).
   await notifier
-    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun, clock }))
+    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun, clock, rtt, sendAhead }))
     .catch(() => {});
   // Персональный тайминг жене/мужу — каждому на ЕГО кабинет (1-я и 2-я заявка),
   // только при успехе подачи этого кабинета (этап 18). Роль аккаунта берётся из

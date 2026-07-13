@@ -91,16 +91,23 @@ function submitTimes(r) {
 
 // Тайминг подачи для разработчика: точность выстрела + время КАЖДОЙ заявки (1-й и
 // 2-й) по КАЖДОМУ аккаунту. Отдельным сообщением, только dev.
-export function timingNotice({ drift, results = [], dryRun, clock } = {}) {
+export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhead } = {}) {
   const lines = [`<b>⏱ Тайминг подачи (00:00)</b>${dryRun ? ' <i>(тест)</i>' : ''}`, ''];
   if (drift != null) {
     lines.push(`Точность выстрела: <b>${drift >= 0 ? '+' : ''}${drift} мс</b> от 00:00:00.000`);
   }
-  // Часы сайта vs наши (этап 19): смещение по заголовку Date + RTT. >0 → сайт спешит.
+  // Упреждение выстрела (этап 20): на сколько мс раньше 00:00 стреляли (0 = выключено).
+  if (sendAhead != null && sendAhead > 0) {
+    lines.push(`Упреждение: <b>−${sendAhead} мс</b> до 00:00 (компенсация сети)`);
+  }
+  // Часы сайта vs наши (этап 19): смещение по заголовку Date. >0 → сайт спешит.
   if (clock && clock.offsetMs != null) {
     const s = clock.offsetMs >= 0 ? '+' : '';
-    const rtt = clock.rttMedianMs != null ? `, RTT ~${clock.rttMedianMs} мс` : '';
-    lines.push(`Часы сайта: <b>${s}${clock.offsetMs} мс</b> от наших${rtt}`);
+    lines.push(`Часы сайта: <b>${s}${clock.offsetMs} мс</b> от наших`);
+  }
+  // RTT/джиттер до сайта (этап 20): чем меньше и стабильнее, тем ближе к первому месту.
+  if (rtt && rtt.rttMinMs != null) {
+    lines.push(`Сеть: RTT min <b>${rtt.rttMinMs} мс</b> / медиана ${rtt.rttMedianMs} мс, джиттер ${rtt.jitterMs} мс`);
   }
   for (const r of results) {
     lines.push(`<b>${esc(r.fio || r.tag)}</b>`);

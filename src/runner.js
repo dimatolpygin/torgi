@@ -4,6 +4,7 @@ import { readMarketState, getTypeMest } from './site/market.js';
 import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
 import { getBookings } from './site/bookings.js';
 import { loadSession, saveSession, markDone, isDone } from './session.js';
+import { waitUntil } from './scheduler.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -231,7 +232,25 @@ export async function attemptForAccount(ctx, attempt = 1) {
     if (sinceMidnight != null) {
       alog(tag, `⏱ от 00:00 до подачи: ${sinceMidnight >= 0 ? '+' : ''}${sinceMidnight} мс (${config.site.bookingsPerAccount} запрос(ов) create_zajav)`);
     }
-    const r = await submitBookings(ctx, attempt, payload, dateStr);
+    let r = await submitBookings(ctx, attempt, payload, dateStr);
+
+    // Безопасный фолбэк упреждения (этап 20): если стреляли РАНЬШЕ 00:00 (send-ahead) и
+    // заявка прилетела до открытия даты — сервер вернул отклонение (no_date). Ничего не
+    // принято (acceptedCount 0 → дублей нет), поэтому ждём истинную полночь и повторяем
+    // подачу один раз без упреждения. Дальше — обычная долбёжка, если и это не прошло.
+    if (
+      !r.success &&
+      r.reason === 'rejected' &&
+      ctx.sendAheadMs > 0 &&
+      ctx.trueTargetMs != null &&
+      Date.now() < ctx.trueTargetMs + 500
+    ) {
+      alog(tag, 'ранний выстрел отклонён (прилетел до 00:00) — жду полночь и повторяю без упреждения', 'warn');
+      await waitUntil(ctx.trueTargetMs);
+      r = await submitBookings(ctx, attempt, payload, dateStr);
+      r.sendAheadFallback = true;
+    }
+
     if (sinceMidnight != null) r.submitMs = sinceMidnight; // для отчёта тайминга разработчику
     return r;
   }

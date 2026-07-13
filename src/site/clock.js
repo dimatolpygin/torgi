@@ -21,12 +21,14 @@ function parseDateHeader(headers) {
   return Number.isFinite(ms) ? ms : NaN;
 }
 
-// Собрать пробы: back-to-back HEAD-запросы (без тела) по горячему сокету.
-// Каждая проба: {t0, t1, dateMs, rtt}. Прогревочный первый запрос не считаем.
+// Собрать пробы: back-to-back GET-запросы к лёгкой статике по горячему сокету.
+// GET, а не HEAD: на этом Apache HEAD аномально медленный (~20–40 мс против ~3–6 мс
+// на GET) — HEAD завышал бы RTT и портил поправку на one-way. Каждая проба:
+// {t0, t1, dateMs, rtt}. Прогревочный первый запрос не считаем.
 async function collectSamples(client, { path, durationMs, gapMs, maxFlips }) {
   const samples = [];
   try {
-    await client.request('HEAD', path); // прогрев сокета/TLS — первый холодный не в счёт
+    await client.request('GET', path); // прогрев сокета/TLS — первый холодный не в счёт
   } catch {
     /* прогрев не критичен */
   }
@@ -37,7 +39,7 @@ async function collectSamples(client, { path, durationMs, gapMs, maxFlips }) {
     const t0 = Date.now();
     let res;
     try {
-      res = await client.request('HEAD', path);
+      res = await client.request('GET', path);
     } catch {
       continue; // сетевой сбой пробы — пропускаем
     }
@@ -69,7 +71,7 @@ function median(arr) {
 // Односторонняя задержка оценивается как min(RTT)/2 (предполагаем симметрию канала).
 export async function measureSiteClockOffset(
   client,
-  { path = '/', durationMs = 3500, gapMs = 20, maxFlips = 4 } = {},
+  { path = '/js/rinki/rinki.reg.js', durationMs = 3500, gapMs = 20, maxFlips = 4 } = {},
 ) {
   const samples = await collectSamples(client, { path, durationMs, gapMs, maxFlips });
   if (samples.length < 2) {
@@ -119,6 +121,48 @@ export async function measureSiteClockOffset(
     flips: offsets.length,
     samples: samples.length,
   };
+}
+
+// Замер сетевого RTT по ГОРЯЧЕМУ keep-alive сокету (этап 20). Лёгкий путь (статика),
+// чтобы измерять сеть + минимум обработки, а не тяжёлую генерацию страницы. Возвращает
+// { rttMinMs, rttMedianMs, jitterMs, oneWayMs, samples }. oneWayMs = rttMin/2 — оценка
+// односторонней задержки (потолок безопасного упреждения выстрела: больше → заявка
+// прилетит до открытия даты в 00:00 и получит no_date).
+export async function measureRtt(client, { path = '/js/rinki/rinki.reg.js', samples = 7 } = {}) {
+  const rtts = [];
+  try {
+    await client.request('GET', path); // прогрев сокета — первый (холодный/TLS) не в счёт
+  } catch {
+    /* прогрев не критичен */
+  }
+  for (let i = 0; i < samples; i++) {
+    const t0 = Date.now();
+    try {
+      await client.request('GET', path); // GET, не HEAD: HEAD на этом Apache ~20–40 мс
+    } catch {
+      continue;
+    }
+    rtts.push(Date.now() - t0);
+  }
+  if (rtts.length === 0) {
+    return { rttMinMs: null, rttMedianMs: null, jitterMs: null, oneWayMs: null, samples: 0 };
+  }
+  const min = Math.min(...rtts);
+  const max = Math.max(...rtts);
+  const med = median(rtts);
+  return {
+    rttMinMs: min,
+    rttMedianMs: med,
+    jitterMs: max - min, // разброс round-trip (грубая мера джиттера)
+    oneWayMs: min / 2,
+    samples: rtts.length,
+  };
+}
+
+// Строка RTT для лога/отчёта.
+export function formatRtt(r) {
+  if (!r || r.rttMinMs == null) return 'RTT: не измерен';
+  return `RTT min ${r.rttMinMs} мс / медиана ${r.rttMedianMs} мс, джиттер ${r.jitterMs} мс (one-way ≈ ${r.oneWayMs.toFixed(1)} мс)`;
 }
 
 // Человекочитаемая строка для лога/отчёта.
