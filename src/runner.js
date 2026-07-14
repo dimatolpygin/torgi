@@ -299,18 +299,23 @@ async function submitBookingsParallel(ctx, attempt, payload, dateStr, n) {
   );
   const submitTimesMs = shots.map((s) => s.sentMs);
   const acceptedCount = shots.filter((s) => s.accepted).length;
-  const maxResp = Math.max(0, ...shots.map((s) => s.responseMs ?? 0));
+  // Время ответа сервера ПО КАЖДОМУ сокету (диагностика: min≈max → сервер медленный для
+  // всех/наплыв; min≪max → наша контензия — сокеты одного аккаунта сериализуются сервером).
+  const respBySocket = shots.map((s) => s.responseMs ?? 0);
+  const maxResp = Math.max(0, ...respBySocket);
+  const minResp = respBySocket.length ? Math.min(...respBySocket) : 0;
   const spread = shots
     .map((s) => (s.sentMs != null ? `${s.sentMs >= 0 ? '+' : ''}${s.sentMs}` : '—'))
     .join('/');
+  const respStr = respBySocket.map((ms, i) => `#${i}:${ms}`).join(' ');
   alog(
     tag,
-    `этап 23: залп ${n} мест по ${n} сокетам параллельно — принято ${acceptedCount}/${n}, отправка [${spread}] мс, макс. ответ ${maxResp} мс`,
+    `этап 23: залп ${n} мест по ${n} сокетам параллельно — принято ${acceptedCount}/${n}, отправка [${spread}] мс; ответ сервера [${respStr}] мс (min ${minResp} / max ${maxResp})`,
   );
 
   if (acceptedCount === 0) {
     alog(tag, `попытка ${attempt}: сервер отклонил все ${n} (code=${shots[0]?.code})`, 'warn');
-    return { tag, success: false, reason: 'rejected', response: { code: shots[0]?.code }, date: dateStr, submitTimesMs, maxResponseMs: maxResp };
+    return { tag, success: false, reason: 'rejected', response: { code: shots[0]?.code }, date: dateStr, submitTimesMs, maxResponseMs: maxResp, minResponseMs: minResp, responseMsBySocket: respBySocket };
   }
 
   // Приняты сервером = поданы (закрываем долбёжку по дате).
@@ -337,7 +342,7 @@ async function submitBookingsParallel(ctx, attempt, payload, dateStr, n) {
     found = await findBookings(ctx.client, dateStr).catch(() => found);
   }
 
-  const base = { tag, success: true, date: dateStr, acceptedCount, submitTimesMs, maxResponseMs: maxResp, parallel: { n, acceptedCount, maxResponseMs: maxResp, cancelled } };
+  const base = { tag, success: true, date: dateStr, acceptedCount, submitTimesMs, maxResponseMs: maxResp, minResponseMs: minResp, responseMsBySocket: respBySocket, parallel: { n, acceptedCount, maxResponseMs: maxResp, minResponseMs: minResp, cancelled } };
   if (found.length >= n) {
     alog(tag, `✅ подтверждено в ЛК: ${found.length} из ${n} мест на ${dateStr}, ${found[0].market}`);
     return { ...base, count: found.length, booking: found[0] };

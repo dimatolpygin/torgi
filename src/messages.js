@@ -129,10 +129,19 @@ export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhea
       lines.push(`  развязка: ${r.parallel.n} мест по ${r.parallel.n} сокетам параллельно`);
     }
     // Реальное время ответа сервера на подачу (этап 23): большое значение при малой метке
-    // отправки = залип POST (медленный ответ Apache), который раньше был не виден.
+    // отправки = залип POST (медленный ответ Apache), который раньше был не виден. min≈max →
+    // сервер медленный для всех/наплыв; min≪max → наша контензия (сокеты сериализуются).
     if (r.maxResponseMs != null) {
       const slow = r.maxResponseMs >= 1000 ? ' ⚠ медленный ответ сервера' : '';
-      lines.push(`  ответ сервера на подачу: ${r.maxResponseMs} мс${slow}`);
+      const range =
+        r.minResponseMs != null && r.minResponseMs !== r.maxResponseMs
+          ? `${r.minResponseMs}–${r.maxResponseMs}`
+          : `${r.maxResponseMs}`;
+      const bySock =
+        Array.isArray(r.responseMsBySocket) && r.responseMsBySocket.length > 1
+          ? ` (по сокетам: ${r.responseMsBySocket.join(' / ')})`
+          : '';
+      lines.push(`  ответ сервера на подачу: ${range} мс${slow}${bySock}`);
     }
   }
   return lines.join('\n');
