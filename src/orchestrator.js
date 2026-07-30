@@ -92,22 +92,27 @@ export async function runNightly(
       .catch(() => {});
   }
 
-  // Часы vs сайт (этап 19): на ОТДЕЛЬНОМ лёгком клиенте (боевые сокеты не трогаем)
-  // меряем смещение часов сайта относительно наших (ntp-дисциплинированных) по
-  // заголовку Date + RTT. Наши часы точны (<0.1 мс от UTC), поэтому это ≈ «часы сайта
-  // vs истинный UTC». Диагностика для отчёта dev; сбой замера подачу не затрагивает.
-  // Делаем заранее (за leadSeconds до 00:00), задолго до критического окна выстрела.
+  // Часы vs сайт (этап 19) + RTT (этап 20) — ДИАГНОСТИКА, по умолчанию ВЫКЛЮЧЕНА.
+  // Замер требует частых проб (ловим переворот секунды в заголовке Date), то есть
+  // создаёт пачку запросов за две минуты до выстрела. Ночью 30.07.2026 это стоило нам
+  // бана IP на час и всей ночи (0 мест из 4): в 23:58 сайт закрыл TCP, выстрел в 00:00
+  // ушёл в ECONNREFUSED. На подачу замер не влияет — включать только осознанно
+  // (CLOCK_PROBE=true), и уже с безопасным разрежением проб.
   let clock = null;
   let rtt = null;
-  try {
-    const probe = new SiteClient();
-    clock = await measureSiteClockOffset(probe, { durationMs: 2500, gapMs: 20, maxFlips: 3 });
-    rtt = await measureRtt(probe, { path: config.timing.rttProbePath, samples: config.timing.rttProbeSamples });
-    await probe.close().catch(() => {});
-    logger.info(`🕐 Часы vs сайт: ${formatClockOffset(clock)}`);
-    logger.info(`📡 ${formatRtt(rtt)}`);
-  } catch (e) {
-    logger.warn(`Замер часов/RTT сайта не удался (${e.message}) — пропускаю`);
+  if (config.timing.clockProbe) {
+    try {
+      const probe = new SiteClient();
+      clock = await measureSiteClockOffset(probe, { durationMs: 3000, gapMs: 200, maxFlips: 3 });
+      rtt = await measureRtt(probe, { path: config.timing.rttProbePath, samples: config.timing.rttProbeSamples });
+      await probe.close().catch(() => {});
+      logger.info(`🕐 Часы vs сайт: ${formatClockOffset(clock)}`);
+      logger.info(`📡 ${formatRtt(rtt)}`);
+    } catch (e) {
+      logger.warn(`Замер часов/RTT сайта не удался (${e.message}) — пропускаю`);
+    }
+  } else {
+    logger.info('🕐 Замер часов/RTT отключён (CLOCK_PROBE≠true) — перед выстрелом не создаём лишних запросов к сайту');
   }
 
   // Упреждение выстрела (этап 20): стреляем на sendAhead мс РАНЬШЕ 00:00, чтобы заявка

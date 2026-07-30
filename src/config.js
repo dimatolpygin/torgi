@@ -93,6 +93,17 @@ export const config = {
     // генерации страницы) и число проб.
     rttProbePath: process.env.RTT_PROBE_PATH || '/js/rinki/rinki.reg.js',
     rttProbeSamples: Math.max(1, Number(process.env.RTT_PROBE_SAMPLES || 7)),
+    // Диагностический замер часов сайта и RTT на прогреве (этапы 19–20).
+    // ⛔ ВЫКЛЮЧЕН ПО УМОЛЧАНИЮ. Замер бил ~130 запросов за 11 с ЗА ДВЕ МИНУТЫ до
+    // выстрела и в ночь 30.07.2026 словил бан IP на час: сайт закрыл нам TCP
+    // (ECONNREFUSED на 443 и 80), подача сорвалась, 0 мест из 4. На саму подачу замер
+    // не влияет — это только строки «Часы сайта»/«Сеть» в отчёте разработчику.
+    // Включать только осознанно и только с большим gapMs (см. site/clock.js).
+    clockProbe: process.env.CLOCK_PROBE === 'true',
+    // Дедлайн на прогрев соединения перед 00:00 (мс): прогрев идёт по ТЕМ ЖЕ сокетам,
+    // с которых стреляем, а таймауты клиента — 30 с. Повисший GET в 23:59:56 уводил бы
+    // выстрел за полночь. По дедлайну прогрев бросаем и стреляем «как есть».
+    warmDeadlineMs: Math.max(200, Number(process.env.WARM_DEADLINE_MS || 2500)),
     // Сухой прогон: не отправлять реальную заявку
     dryRun: process.env.DRY_RUN !== 'false',
   },
@@ -118,6 +129,13 @@ export const config = {
     jitterFrac: Number(process.env.RETRY_JITTER || 0.3), // ±30% случайности
     maxPerMinute: Number(process.env.RETRY_MAX_PER_MIN || 15), // жёсткий потолок
     blockStreak: Number(process.env.RETRY_BLOCK_STREAK || 5), // подряд ошибок = тревога
+    // Предохранитель от подкормки бана. Если сайт РАЗРЫВАЕТ соединение (ECONNREFUSED и
+    // родня — это уже блокировка IP, а не отказ формы), долбить дальше нельзя: каждая
+    // попытка обновляет счётчик fail2ban и продлевает бан. В ночь 30.07.2026 бот сделал
+    // 399 таких попыток за час. После connBreakStreak отказов подряд долбёжка встаёт на
+    // connCooldownMs вместо обычных 4–20 с.
+    connBreakStreak: Math.max(1, Number(process.env.RETRY_CONN_BREAK_STREAK || 3)),
+    connCooldownMs: Math.max(1000, Number(process.env.RETRY_CONN_COOLDOWN_MS || 600_000)),
   },
 
   // Postgres

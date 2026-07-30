@@ -47,6 +47,23 @@ function jitter(baseMs, frac) {
   return Math.max(500, Math.round(baseMs + (Math.random() * 2 - 1) * baseMs * frac));
 }
 
+// Похоже ли на блокировку IP сайтом (а не на отказ формы)? Признак — сбой на уровне
+// СОЕДИНЕНИЯ: fail2ban отвечает REJECT, и мы получаем ECONNREFUSED ещё до HTTP. Такое
+// нельзя долбить — каждая попытка продлевает бан (ночь 30.07.2026: 399 попыток в час).
+const CONN_BLOCK_RE = /ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|socket hang up|Connect Timeout/i;
+
+export function looksLikeIpBlock(errOrResult) {
+  if (!errOrResult) return false;
+  const parts = [
+    errOrResult.code,
+    errOrResult.message,
+    errOrResult.error?.code,
+    errOrResult.error?.message,
+    errOrResult.response?.code, // быстрый путь кладёт сюда «err:connect ECONNREFUSED …»
+  ];
+  return parts.some((p) => typeof p === 'string' && CONN_BLOCK_RE.test(p));
+}
+
 // Режим долбёжки: повторять задачу, пока не вернёт {success:true} или не выйдет окно.
 // Безопасен для единственного IP: адаптивный интервал (первые минуты чаще, затем реже),
 // джиттер, жёсткий потолок запросов в минуту, и тревога при серии сетевых ошибок
@@ -60,6 +77,8 @@ export async function retryUntil(taskFn, opts = {}) {
     jitterFrac = config.retry.jitterFrac,
     maxPerMinute = config.retry.maxPerMinute,
     blockStreak = config.retry.blockStreak,
+    connBreakStreak = config.retry.connBreakStreak,
+    connCooldownMs = config.retry.connCooldownMs,
     onPossibleBlock,
   } = opts;
 
@@ -68,6 +87,7 @@ export async function retryUntil(taskFn, opts = {}) {
   const recent = []; // временные метки запросов за последнюю минуту
   let attempt = 0;
   let failStreak = 0;
+  let connStreak = 0; // подряд сбоев НА УРОВНЕ СОЕДИНЕНИЯ (похоже на бан IP)
 
   for (;;) {
     // Потолок: не больше maxPerMinute запросов в скользящую минуту.
@@ -94,9 +114,28 @@ export async function retryUntil(taskFn, opts = {}) {
     }
 
     if (res && res.success) return res;
+
+    // Отказ на уровне соединения = нас забанил сайт. Считаем такие отдельно от обычных
+    // неуспехов («дат нет» и т.п.), чтобы не спутать блокировку с закрытой формой.
+    connStreak = looksLikeIpBlock(res) ? connStreak + 1 : 0;
+
     if (Date.now() >= deadline) {
       logger.warn(`Окно долбёжки исчерпано после ${attempt} попыток (${Math.round(windowMs / 60000)} мин)`);
       return res;
+    }
+
+    // Предохранитель: пока сайт закрывает TCP, ждём долго. Иначе каждая попытка
+    // обновляет счётчик fail2ban и бан не кончается никогда.
+    if (connStreak >= connBreakStreak) {
+      const wait = Math.min(connCooldownMs, Math.max(0, deadline - Date.now()));
+      const waitStr = wait >= 60_000 ? `${Math.round(wait / 60000)} мин` : `${Math.round(wait / 1000)} с`;
+      logger.warn(
+        `Сайт отказывает в СОЕДИНЕНИИ ${connStreak} раз(а) подряд — это похоже на блокировку нашего IP. ` +
+          `Пауза ${waitStr}: продолжать долбить нельзя, это продлевает бан.`,
+      );
+      connStreak = 0;
+      await sleep(wait);
+      continue;
     }
 
     const inFastPhase = Date.now() - start < fastPhaseMs;
