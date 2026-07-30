@@ -25,7 +25,15 @@ function parseDateHeader(headers) {
 // GET, а не HEAD: на этом Apache HEAD аномально медленный (~20–40 мс против ~3–6 мс
 // на GET) — HEAD завышал бы RTT и портил поправку на one-way. Каждая проба:
 // {t0, t1, dateMs, rtt}. Прогревочный первый запрос не считаем.
-async function collectSamples(client, { path, durationMs, gapMs, maxFlips }) {
+// ⚠ gapMs — не косметика, а защита от бана: сайт банит IP на час за пачку частых
+// запросов. Ставим нижнюю границу разрежения (MIN_GAP_MS) и жёсткий потолок числа проб
+// (maxSamples), чтобы замер физически не мог превратиться в 100+ запросов за секунды,
+// как это было при gapMs=20 в ночь 30.07.2026.
+const MIN_GAP_MS = 150;
+const MAX_SAMPLES = 25;
+
+async function collectSamples(client, { path, durationMs, gapMs, maxFlips, maxSamples = MAX_SAMPLES }) {
+  gapMs = Math.max(MIN_GAP_MS, gapMs);
   const samples = [];
   try {
     await client.request('GET', path); // прогрев сокета/TLS — первый холодный не в счёт
@@ -50,6 +58,7 @@ async function collectSamples(client, { path, durationMs, gapMs, maxFlips }) {
       if (lastSec != null && dateMs === lastSec + 1000) flips++;
       lastSec = dateMs;
       if (maxFlips && flips >= maxFlips) break;
+      if (samples.length >= maxSamples) break; // потолок запросов — защита от бана
     }
     const wait = gapMs - (Date.now() - t1);
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
@@ -71,7 +80,7 @@ function median(arr) {
 // Односторонняя задержка оценивается как min(RTT)/2 (предполагаем симметрию канала).
 export async function measureSiteClockOffset(
   client,
-  { path = '/js/rinki/rinki.reg.js', durationMs = 3500, gapMs = 20, maxFlips = 4 } = {},
+  { path = '/js/rinki/rinki.reg.js', durationMs = 3500, gapMs = MIN_GAP_MS, maxFlips = 4 } = {},
 ) {
   const samples = await collectSamples(client, { path, durationMs, gapMs, maxFlips });
   if (samples.length < 2) {
@@ -135,7 +144,11 @@ export async function measureRtt(client, { path = '/js/rinki/rinki.reg.js', samp
   } catch {
     /* прогрев не критичен */
   }
-  for (let i = 0; i < samples; i++) {
+  // Пробы разрежаем (MIN_GAP_MS) и ограничиваем числом: back-to-back серия — это тоже
+  // пачка запросов, за которую сайт банит IP.
+  const n = Math.min(samples, 10);
+  for (let i = 0; i < n; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, MIN_GAP_MS));
     const t0 = Date.now();
     try {
       await client.request('GET', path); // GET, не HEAD: HEAD на этом Apache ~20–40 мс

@@ -18,6 +18,18 @@ function alog(tag, msg, level = 'info') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Ограничить ожидание промиса. Сам запрос при этом не отменяется (undici доведёт его до
+// конца или до своего таймаута) — важно лишь то, что МЫ не ждём дольше отведённого и не
+// пропускаем момент выстрела. Таймер снимается в finally, поэтому висящих хендлов не
+// остаётся (unref здесь нельзя: пока мы ждём дедлайн, он должен держать event loop).
+function withDeadline(promise, ms) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`не успел за ${ms} мс`)), ms);
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
 // Рандомизированная пауза-маскировка перед второй+ заявкой (этап 17). Берём целое
 // число мс из [minMs, maxMs] (границы устойчивы к перестановке). 0, если маскировка
 // выключена (maxMs<=0). Случайность важна: фикс. разрыв сам по себе оставляет след.
@@ -103,16 +115,24 @@ export async function warmConnection(ctx) {
   if (!ctx?.loggedIn || !ctx.client) return;
   const clients = ctx.clients || [ctx.client];
   try {
-    // Освежаем поля на основном сокете; доп-сокеты мультиконнекта просто прогреваем
-    // (устанавливаем/держим горячим TCP/TLS) и обновляем на них общую куку сессии.
-    const fields = await getRegFields(ctx.client);
-    ctx.fields = fields;
-    if (clients.length > 1) {
-      await Promise.all(clients.slice(1).map((c) => getRegFields(c).catch(() => {})));
-      for (const c of clients.slice(1)) {
-        for (const [k, v] of ctx.client.cookies) c.cookies.set(k, v);
-      }
-    }
+    // Прогрев идёт по ТЕМ ЖЕ сокетам, с которых стреляем, а таймауты клиента — 30 с.
+    // Без дедлайна повисший GET в 23:59:56 уводит выстрел за полночь (сайт в полночь
+    // отвечает секундами). По дедлайну бросаем ожидание и стреляем «как есть».
+    await withDeadline(
+      (async () => {
+        // Освежаем поля на основном сокете; доп-сокеты мультиконнекта просто прогреваем
+        // (устанавливаем/держим горячим TCP/TLS) и обновляем на них общую куку сессии.
+        const fields = await getRegFields(ctx.client);
+        ctx.fields = fields;
+        if (clients.length > 1) {
+          await Promise.all(clients.slice(1).map((c) => getRegFields(c).catch(() => {})));
+          for (const c of clients.slice(1)) {
+            for (const [k, v] of ctx.client.cookies) c.cookies.set(k, v);
+          }
+        }
+      })(),
+      config.timing.warmDeadlineMs,
+    );
     alog(ctx.tag, `соединени${clients.length > 1 ? `я (${clients.length}) прогреты` : 'е прогрето'} перед 00:00 (поля освежены)`);
   } catch (e) {
     alog(ctx.tag, `прогрев соединения не удался (${e.message}) — выстрел по как есть`, 'warn');
