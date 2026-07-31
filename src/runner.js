@@ -1,5 +1,5 @@
 import { DateTime } from 'luxon';
-import { login, restoreSession } from './site/auth.js';
+import { loginPaced, restoreSession } from './site/auth.js';
 import { SiteClient } from './site/client.js';
 import { readMarketState, getTypeMest } from './site/market.js';
 import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
@@ -163,7 +163,11 @@ export async function prepareAccount(account, { predicted } = {}) {
     }
 
     if (!ctx) {
-      const { client, loggedIn, fio } = await login(account.login, account.password);
+      // Вход — только через пейсер: два POST /login/ в одну секунду с одного IP сайт
+      // считает перебором пароля и банит нас на час (ночи 30.07 и 31.07.2026 потеряны
+      // именно так). В норме сюда не попадаем вовсе — сессию держит живой keeper.js.
+      alog(tag, 'сессии в Redis нет — потребуется вход (разнесён во времени)', 'warn');
+      const { client, loggedIn, fio } = await loginPaced(account.login, account.password);
       if (loggedIn) {
         await saveSession(tag, client.cookies);
         alog(tag, `сессия готова (${fio || tag}), кука сохранена в Redis`);

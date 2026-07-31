@@ -3,7 +3,11 @@ import { logger } from './logger.js';
 
 // Сессионные куки и флаг «сегодня подано» в Redis. При недоступности Redis
 // функции мягко деградируют (нет сессии → будет обычный логин).
-const SESSION_TTL = Number(process.env.SESSION_TTL_SEC || 12 * 3600); // 12 часов
+// TTL сессии. 30 ч (а не 12): между подачами 24 ч, и при TTL=12 ч кука к ночи ВСЕГДА
+// протухала → бот логинился в 23:58 → бан IP на час (ночи 30.07 и 31.07.2026 потеряны).
+// Живой куку держит сторож (keeper.js), а этот TTL — запас на его простой.
+const SESSION_TTL = Number(process.env.SESSION_TTL_SEC || 30 * 3600);
+export { SESSION_TTL as SESSION_TTL_SEC };
 const DONE_TTL = Number(process.env.DONE_TTL_SEC || 3 * 24 * 3600); // 3 суток
 
 const sessKey = (login) => `bron:sess:${login}`;

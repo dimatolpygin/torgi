@@ -5,6 +5,7 @@ import { checkRedis, redis } from './redis.js';
 import { getAccounts } from './accounts.js';
 import { createNotifier } from './notify.js';
 import { startScheduler } from './orchestrator.js';
+import { startSessionKeeper } from './keeper.js';
 import { nextRegistrationMidnight } from './scheduler.js';
 import { startedNotice, stoppedNotice } from './messages.js';
 
@@ -62,10 +63,15 @@ async function main() {
     )
     .catch(() => {});
 
+  // Сторож сессий: держит куки кабинетов живыми, чтобы в 23:5x НЕ ПОНАДОБИЛСЯ вход —
+  // именно вход (POST /login/) ловит бан IP на час и стоил нам ночей 30.07 и 31.07.2026.
+  const stopKeeper = startSessionKeeper(getAccounts);
+
   logger.info('✅ Каркас жив, Telegram подключён. Планировщик ночной подачи активен.');
 
   const shutdown = async (signal) => {
     logger.info(`Получен ${signal}, завершаюсь…`);
+    stopKeeper();
     await notifier.notifyDev(stoppedNotice()).catch(() => {});
     notifier.stop(signal);
     await pool.end().catch(() => {});

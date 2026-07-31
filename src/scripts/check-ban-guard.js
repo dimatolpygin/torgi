@@ -9,6 +9,7 @@
 //  5. Прогрев соединения перед 00:00 не может подвесить выстрел: есть дедлайн.
 //
 // Запуск: node src/scripts/check-ban-guard.js
+import { DateTime } from 'luxon';
 import { config } from '../config.js';
 import { retryUntil, looksLikeIpBlock } from '../scheduler.js';
 import { warmConnection } from '../runner.js';
@@ -107,6 +108,47 @@ async function main() {
     `прогрев с повисшим сокетом вернулся за ${waited} мс (дедлайн ${config.timing.warmDeadlineMs} мс)`,
     waited < config.timing.warmDeadlineMs + 800,
     `ждали ${waited} мс`,
+  );
+
+  // 7. Разгон входов: два входа НИКОГДА не уходят одновременно (это и есть сигнатура
+  // перебора пароля, за которую сайт банит IP на час — репро 31.07.2026).
+  const { createPacer } = await import('../pacer.js');
+  const stamps = [];
+  let fakeNow = 0;
+  const paced = createPacer({
+    gapMs: 45_000,
+    now: () => fakeNow,
+    sleepFn: async (ms) => {
+      fakeNow += ms; // виртуальные часы: тест не ждёт реальных 45 с
+    },
+  });
+  await Promise.all([1, 2, 3].map((i) => paced(async () => stamps.push({ i, at: fakeNow }))));
+  const gaps = stamps.slice(1).map((s, i) => s.at - stamps[i].at);
+  check(
+    `входы разнесены: ${stamps.length} входа, интервалы ${gaps.join('/')} мс`,
+    stamps.length === 3 && gaps.every((g) => g >= 45_000),
+    `интервалы ${gaps.join('/')}`,
+  );
+  check('порядок входов сохранён (очередь, а не гонка)', stamps.map((s) => s.i).join(',') === '1,2,3');
+  check(
+    `боевой интервал между входами ${config.site.loginMinGapMs / 1000} с и он влезает в прогрев (${config.timing.prepareLeadSeconds} с)`,
+    config.site.loginMinGapMs >= 60_000 && config.site.loginMinGapMs * 2 <= config.timing.prepareLeadSeconds * 1000,
+  );
+
+  // 8. Сторож сессий молчит рядом с полуночью и работает днём
+  const { inQuietWindow } = await import('../keeper.js');
+  const at = (h, m) => DateTime.fromObject({ hour: h, minute: m }, { zone: config.timing.timezone });
+  check('сторож молчит в 23:50 (тихое окно перед подачей)', inQuietWindow(at(23, 50)));
+  check('сторож молчит в 00:05 (тихое окно после подачи)', inQuietWindow(at(0, 5)));
+  check('сторож работает днём (15:00)', !inQuietWindow(at(15, 0)));
+  check('сторож работает в 23:30 (до тихого окна)', !inQuietWindow(at(23, 30)));
+
+  // 9. Сессия переживает сутки между подачами (иначе ночью неизбежен вход)
+  const { SESSION_TTL_SEC } = await import('../session.js');
+  check(
+    `TTL сессии ${Math.round(SESSION_TTL_SEC / 3600)} ч — больше суток между подачами`,
+    SESSION_TTL_SEC >= 25 * 3600,
+    `${SESSION_TTL_SEC} с`,
   );
 
   if (failed === 0) {

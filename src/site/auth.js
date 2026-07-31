@@ -1,5 +1,7 @@
 import { SiteClient } from './client.js';
 import { logger } from '../logger.js';
+import { config } from '../config.js';
+import { createPacer } from '../pacer.js';
 
 const ACCOUNT_PATH = '/rinki/minsk/account/';
 const LOGIN_PATH = '/rinki/minsk/login/';
@@ -67,6 +69,17 @@ export async function login(loginName, password) {
   }
 
   return { client, loggedIn, fio };
+}
+
+// Разгон входов: сайт банит IP на час за пачку логинов подряд (два POST /login/ в
+// одну секунду = сигнатура перебора пароля; воспроизведено 31.07.2026). Все входы
+// бота идут через один пейсер: они сериализуются и разносятся минимум на
+// LOGIN_MIN_GAP_MS. Пользоваться этим, а не login() напрямую, везде, где вход может
+// совпасть по времени с входом другого кабинета.
+const loginPacer = createPacer({ gapMs: config.site.loginMinGapMs });
+
+export function loginPaced(loginName, password) {
+  return loginPacer(() => login(loginName, password));
 }
 
 export default login;

@@ -57,13 +57,37 @@ export const config = {
     // Сколько мест бронировать на аккаунт за подачу (лимит сайта — 2/дату).
     // 1 — бот берёт одно место (клиент 2-е вручную); 2 — бот забирает обе ячейки.
     bookingsPerAccount: Math.max(1, Number(process.env.BOOKINGS_PER_ACCOUNT || 1)),
+    // Минимальный интервал между ВХОДАМИ (POST /login/) с нашего IP. Два входа в одну
+    // секунду = сигнатура перебора пароля, сайт банит IP на час (воспроизведено вживую
+    // 31.07.2026, из-за этого потеряны ночи 30.07 и 31.07). Все входы бота идут через
+    // общий пейсер (site/auth.js → loginPaced).
+    // 120 с: точный порог жала сайта неизвестен, а входы у нас редкие (сессию держит
+    // сторож), поэтому берём с запасом. Прогрев за 300 с до полуночи вмещает два входа.
+    loginMinGapMs: Math.max(0, Number(process.env.LOGIN_MIN_GAP_MS || 120_000)),
   },
 
   // Тайминг подачи
   timing: {
     timezone: process.env.TZ_NAME || 'Europe/Minsk',
-    // За сколько секунд до полуночи просыпаться и прогревать сессию
-    prepareLeadSeconds: Number(process.env.PREPARE_LEAD_SECONDS || 120),
+    // За сколько секунд до полуночи просыпаться и прогревать сессию. 300 с (а не 120):
+    // если сессию всё же придётся восстанавливать входом, он должен случиться подальше
+    // от 00:00 и с запасом на разгон входов (loginMinGapMs).
+    prepareLeadSeconds: Number(process.env.PREPARE_LEAD_SECONDS || 300),
+    // Сторож сессий (keeper.js): как часто продлевать куки кабинетов, чтобы к ночи
+    // сессия была живой и ВХОД НЕ ПОТРЕБОВАЛСЯ. 0 — выключить. PHP чистит неактивные
+    // сессии обычно через ~24 мин, поэтому дёргаем чаще.
+    sessionKeepaliveMs: Math.max(0, Number(process.env.SESSION_KEEPALIVE_MS || 10 * 60_000)),
+    // Разнос кабинетов внутри одного тика сторожа (не бьём двумя запросами разом).
+    keeperStaggerMs: Math.max(0, Number(process.env.KEEPER_STAGGER_MS || 20_000)),
+    // Не чаще этого сторож пробует ВОЙТИ в кабинет, если сессия протухла (при бане
+    // череда входов только усугубит).
+    keeperLoginRetryMs: Math.max(60_000, Number(process.env.KEEPER_LOGIN_RETRY_MS || 15 * 60_000)),
+    // Тихое окно сторожа вокруг полуночи (мин): рядом с выстрелом не делаем ни одного
+    // лишнего запроса к сайту.
+    keeperQuiet: {
+      quietBeforeMin: Math.max(0, Number(process.env.KEEPER_QUIET_BEFORE_MIN || 20)),
+      quietAfterMin: Math.max(0, Number(process.env.KEEPER_QUIET_AFTER_MIN || 10)),
+    },
     // На сколько дней вперёд открывается дата в 00:00 (Комаровский = неделя вперёд).
     // Используется для предвычисления даты брони в прогреве (этап 12).
     bookingLeadDays: Number(process.env.BOOKING_LEAD_DAYS || 7),
