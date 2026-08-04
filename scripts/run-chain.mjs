@@ -52,11 +52,32 @@ function stages() {
   return out;
 }
 
+// ── Рабочая ветка ──────────────────────────────────────────────────────────
+// В master висит автодеплой (push кода → пересборка бота на боевом сервере).
+// Автопрогон НЕ имеет права туда писать: иначе непроверенные правки уезжают на
+// прод раньше человека. Вся веха живёт в отдельной ветке, слияние — осознанное,
+// руками, после чек-листа.
+const BRANCH = 'veha-3';
+const branch = git('git rev-parse --abbrev-ref HEAD');
+if (branch !== BRANCH) {
+  const exists = git(`git rev-parse --verify --quiet ${BRANCH}`);
+  const sw = spawnSync('git', exists ? ['checkout', BRANCH] : ['checkout', '-b', BRANCH], {
+    stdio: 'inherit',
+  });
+  if (sw.status !== 0) {
+    console.log(`\n  ⏹ Не смог переключиться на ветку ${BRANCH}. Останавливаюсь.`);
+    console.log('     Скорее всего мешают незакоммиченные изменения — разберись руками.\n');
+    process.exit(1);
+  }
+  console.log(`  Ветка переключена: ${branch} → ${BRANCH}`);
+}
+
 console.log('');
 console.log('  ══ Автопрогон Вехи 3 ══');
 console.log('  Этапы идут подряд без твоего участия. Проверка — одна, в конце.');
 console.log('  Остановлюсь сам там, где без тебя нельзя: боевая ночь или ПК клиентки.');
 console.log('  Права сессий ограничены файлом .claude/chain-settings.json (файлы, git, node).');
+console.log(`  Работаю в ветке ${BRANCH} — в master не пишу, автодеплой на прод не трогаю.`);
 console.log('');
 
 let ran = 0;
