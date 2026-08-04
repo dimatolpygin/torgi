@@ -1,11 +1,7 @@
 @echo off
+rem Keep this file ASCII-only: cmd.exe mangles UTF-8 text and splits it into
+rem bogus commands ("... is not recognized"). All Russian output lives in node.
 chcp 65001 > nul
 cd /d "%~dp0"
-echo.
-echo  === Автопрогон Вехи 3 ===
-echo  Этапы идут подряд, тебя не дёргают. Остановится сам там,
-echo  где без тебя физически нельзя (боевая ночь / ПК клиентки).
-echo  Проверка будет ОДНА: docs\uat\CHECKLIST.md
-echo.
 node scripts/run-chain.mjs %*
 pause

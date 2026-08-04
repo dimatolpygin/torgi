@@ -55,6 +55,8 @@ function stages() {
 console.log('');
 console.log('  ══ Автопрогон Вехи 3 ══');
 console.log('  Этапы идут подряд без твоего участия. Проверка — одна, в конце.');
+console.log('  Остановлюсь сам там, где без тебя нельзя: боевая ночь или ПК клиентки.');
+console.log('  Права сессий ограничены файлом .claude/chain-settings.json (файлы, git, node).');
 console.log('');
 
 let ran = 0;
@@ -83,16 +85,12 @@ for (;;) {
   }
 
   const before = git('git tag -l "ext-*"');
+  // Права передаём ФАЙЛОМ, а не флагом --allowedTools: строки вида «Bash(git *)»
+  // при проходе через cmd.exe теряют кавычки, и правило превращается в «*)»,
+  // которое Claude Code справедливо отбрасывает.
   const r = spawnSync(
     'claude',
-    [
-      '-p',
-      '/ext-next',
-      '--permission-mode',
-      'acceptEdits',
-      '--allowedTools',
-      'Read,Edit,Write,Glob,Grep,Bash(git *),Bash(node *),Bash(npm *)',
-    ],
+    ['-p', '/ext-next', '--permission-mode', 'acceptEdits', '--settings', '.claude/chain-settings.json'],
     { stdio: 'inherit', shell: true },
   );
   ran++;

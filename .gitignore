@@ -12,3 +12,4 @@ coverage/
 # серверов. Репозиторий публичный — этот файл в git не кладём (общие настройки и хуки
 # okplan лежат в .claude/settings.json, они безопасны).
 .claude/settings.local.json
+.claude/last-verdict.txt
