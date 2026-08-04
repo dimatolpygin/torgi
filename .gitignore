@@ -7,3 +7,8 @@ npm-debug.log*
 dist/
 coverage/
 .secrets/
+
+# Локальный allow-лист разрешений Claude Code: в нём осели строки команд с паролями
+# серверов. Репозиторий публичный — этот файл в git не кладём (общие настройки и хуки
+# okplan лежат в .claude/settings.json, они безопасны).
+.claude/settings.local.json
