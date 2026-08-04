@@ -4,7 +4,7 @@
 //
 // Ничего не меняет, никуда не ходит по сети — только читает файлы и git.
 
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
 const read = (p) => (existsSync(p) ? readFileSync(p, 'utf8') : '');
@@ -34,33 +34,37 @@ for (const line of status.split('\n')) {
 const tags = git('git tag -l "ext-*"').split('\n').filter(Boolean);
 
 // Состояние этапа — по фактам на диске, а не по значку в таблице.
+// ext-N-auto = машинная часть пройдена (ставит автопрогон), ext-N-done = ты подписал.
+const checklist = read('docs/uat/CHECKLIST.md');
 for (const r of rows) {
-  r.uat = `docs/uat/ext-${r.n}.md`;
-  r.hasUat = existsSync(r.uat);
+  const sec = roadmap.split(/^## /m).find((s) => s.startsWith(`Этап ${r.n} —`)) || '';
+  r.gate = (sec.match(/\*\*Гейт:\s*(АВТО|СТОП)\*\*/) || [, 'АВТО'])[1];
+  r.auto = tags.includes(`ext-${r.n}-auto`);
   r.closed = tags.includes(r.tag);
-  r.state = r.closed ? 'ГОТОВО' : r.hasUat ? 'ЖДЁТ ТЕБЯ' : r.mark === '🚧' ? 'В РАБОТЕ' : 'не начат';
-  // сколько дней в этом состоянии
-  const path = r.hasUat ? r.uat : 'docs/STATUS.md';
+  r.hasUat = checklist.includes(`## Этап ext-${r.n} `);
+  r.state = r.closed
+    ? 'ГОТОВО'
+    : r.auto
+      ? 'сделано, ждёт твоей подписи'
+      : r.mark === '🚧'
+        ? 'В РАБОТЕ'
+        : r.gate === 'СТОП'
+          ? 'нужен ты (ночь/ПК)'
+          : 'не начат';
+  const path = 'docs/STATUS.md';
   const when = git(`git log -1 --format=%ct -- "${path}"`);
   r.days = when ? daysAgo(Number(when) * 1000) : null;
-  if (r.hasUat) {
-    try {
-      r.uatDays = daysAgo(statSync(r.uat).mtimeMs);
-    } catch {
-      /* нет файла — не беда */
-    }
-  }
 }
 
 const done = rows.filter((r) => r.closed).length;
-const bar = rows.map((r) => (r.closed ? '█' : r.hasUat ? '▓' : r.mark === '🚧' ? '▒' : '░')).join('');
+const bar = rows.map((r) => (r.closed ? '█' : r.auto ? '▓' : r.mark === '🚧' ? '▒' : '░')).join('');
 
 console.log('');
 console.log('  ВЕХА 3 · расширение Chrome');
 console.log(`  [${bar}]  ${done} из ${rows.length} закрыто`);
 console.log('');
 for (const r of rows) {
-  const icon = r.closed ? '✅' : r.hasUat ? '👀' : r.mark === '🚧' ? '🔨' : '  ';
+  const icon = r.closed ? '✅' : r.auto ? '👀' : r.mark === '🚧' ? '🔨' : r.gate === 'СТОП' ? '⏹' : '  ';
   const age = !r.closed && r.days !== null && r.days > 0 ? `  (${r.days} дн.)` : '';
   console.log(`  ${icon} ext-${r.n}  ${r.title.padEnd(38)} ${r.state}${age}`);
 }
@@ -71,11 +75,11 @@ for (const r of rows) {
   if ((r.mark === '✅') !== r.closed) {
     alarms.push(`этап ${r.n}: в таблице «${r.mark}», тег ${r.closed ? 'есть' : 'ОТСУТСТВУЕТ'} — STATUS врёт, чинить первым делом`);
   }
-  if (r.hasUat && !r.closed && r.uatDays >= 2) {
-    alarms.push(`этап ${r.n}: чек-лист лежит непроверенным ${r.uatDays} дн. — пройди ${r.uat}, потом ok.bat`);
+  if (r.mark === '🚧' && !r.auto && r.days !== null && r.days >= 1) {
+    alarms.push(`этап ${r.n}: «в работе» ${r.days} дн. без тега ext-${r.n}-auto — сессия оборвалась, запусти auto.bat`);
   }
-  if (!r.hasUat && r.mark === '🚧' && r.days !== null && r.days >= 2) {
-    alarms.push(`этап ${r.n}: «в работе» ${r.days} дн., но чек-листа так и нет — сессия оборвалась, запусти ext.bat`);
+  if (r.auto && !r.hasUat) {
+    alarms.push(`этап ${r.n}: автопроверки прошли, но блока в CHECKLIST.md нет — тебе нечего проверить`);
   }
 }
 const dirty = git('git status --porcelain');
@@ -92,14 +96,18 @@ if (alarms.length) {
 }
 
 // ── Что делать прямо сейчас ────────────────────────────────────────────────
-const waiting = rows.find((r) => !r.closed && r.hasUat);
-const next = rows.find((r) => !r.closed);
+const nextAuto = rows.find((r) => !r.closed && !r.auto && r.gate !== 'СТОП');
+const pending = (checklist.match(/^- \[ \] /gm) || []).length;
+const blockedBy = rows.find((r) => !r.closed && !r.auto && r.gate === 'СТОП');
 console.log('');
 console.log('  ▶ ТВОЙ СЛЕДУЮЩИЙ ШАГ:');
-if (waiting) {
-  console.log(`     Пройти чек-лист ${waiting.uat} (этап ${waiting.n}), затем запустить ok.bat`);
-} else if (next) {
-  console.log(`     Запустить ext.bat — возьмётся этап ext-${next.n}: ${next.title}`);
+if (nextAuto) {
+  console.log(`     Запустить auto.bat — пойдёт с ext-${nextAuto.n} и дальше, пока не упрётся в тебя`);
+  if (pending) console.log(`     (попутно уже накопилось ${pending} пункт(ов) на проверку в docs/uat/CHECKLIST.md)`);
+} else if (pending) {
+  console.log(`     Пройти docs/uat/CHECKLIST.md — ${pending} пункт(ов), затем ok.bat`);
+} else if (blockedBy) {
+  console.log(`     Машина своё сделала. Дальше нужен ты: ext-${blockedBy.n} — ${blockedBy.title}`);
 } else {
   console.log('     Веха 3 закрыта целиком.');
 }
@@ -113,6 +121,6 @@ if (log) {
 }
 
 console.log('');
-console.log('  Ничего не крутится в фоне: сессия работает, только пока открыто окно ext.bat.');
+console.log('  Ничего не крутится в фоне: сессии идут, только пока открыто окно auto.bat.');
 console.log('  Бот на сервере живёт отдельно — его признак жизни это ночное сообщение в Telegram.');
 console.log('');

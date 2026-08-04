@@ -40,12 +40,14 @@ try {
 } catch {
   /* не git */
 }
-if (tags.includes(inWork.tag)) process.exit(0);
+if (tags.includes(inWork.tag) || tags.includes(`ext-${inWork.n}-auto`)) process.exit(0);
 
 const problems = [];
-if (!existsSync(`docs/uat/ext-${inWork.n}.md`)) {
-  problems.push(`нет чек-листа docs/uat/ext-${inWork.n}.md — человеку нечего проверять`);
+const checklist = read('docs/uat/CHECKLIST.md');
+if (!checklist.includes(`## Этап ext-${inWork.n} `)) {
+  problems.push('в docs/uat/CHECKLIST.md нет блока этого этапа — человеку нечего будет проверить в конце');
 }
+problems.push(`нет тега ext-${inWork.n}-auto — без него автопрогон решит, что этап встал, и остановится`);
 try {
   const dirty = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
   if (dirty) problems.push('есть незакоммиченные изменения — работа этапа не зафиксирована в git');
@@ -61,9 +63,8 @@ console.log(
     reason:
       `Этап ext-${inWork.n} («${inWork.title}») в работе, но сессия не закончена по okplan: ` +
       problems.join('; ') +
-      '. Доделай хвост: короткий чек-лист для человека (≤5 пунктов, простым языком: что сделать и что должно быть видно) ' +
-      'в docs/uat/ext-' +
-      inWork.n +
-      '.md, затем коммит. Тег НЕ ставить — его ставит человек после проверки.',
+      '. Доделай хвост: (1) блок этапа в docs/uat/CHECKLIST.md — до 3 пунктов простым языком, ' +
+      '(2) прогони автопроверку машинных критериев, (3) поставь тег ext-' + inWork.n + '-auto, (4) коммит и push --tags. ' +
+      'Тег ext-' + inWork.n + '-done НЕ ставить — это подпись человека.',
   }),
 );
