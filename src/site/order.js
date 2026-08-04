@@ -81,6 +81,28 @@ export async function submitOrder(client, payload, { dryRun = config.timing.dryR
   // code 200/201 — заявка принята
   const accepted = parsed.code === '200' || parsed.code === '201' || parsed.code === 200 || parsed.code === 201;
   logger.info(`Ответ create_zajav: code=${parsed.code}, принято: ${accepted ? 'да' : 'нет'}`);
+  // Разбор отказа. В ночь 04.08.2026 сервер отклонял ВСЁ мгновенно (code=500 за 11 мс,
+  // один ответ вообще не JSON), а по логам было видно только «code=500» — понять причину
+  // постфактум оказалось нечем. Поэтому при отказе печатаем, ЧТО именно не понравилось
+  // серверу: непустые поля-ошибки (`no_date`/`empty`/`no_assort`/`length`), HTTP-статус и
+  // признаки защиты (`server`, `cf-ray`, `cf-mitigated`), а для не-JSON — начало тела.
+  // Это только логирование: ни одного лишнего запроса к сайту не добавляется.
+  if (!accepted) {
+    const badFields = Object.entries(parsed)
+      .filter(([k, v]) => k !== 'code' && k !== '_raw' && typeof v === 'string' && v !== '')
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    const guard = ['server', 'cf-ray', 'cf-mitigated', 'x-sucuri-id', 'retry-after']
+      .filter((h) => res.headers?.[h])
+      .map((h) => `${h}=${res.headers[h]}`)
+      .join(', ');
+    logger.warn(
+      `↳ отказ create_zajav: HTTP ${res.status}` +
+        (badFields ? `; поля: ${badFields}` : '') +
+        (parsed._raw !== undefined ? `; тело не JSON (${String(parsed._raw).slice(0, 200).replace(/\s+/g, ' ')})` : '') +
+        (guard ? `; заголовки: ${guard}` : ''),
+    );
+  }
   return { dryRun: false, accepted, response: parsed };
 }
 
