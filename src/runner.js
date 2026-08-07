@@ -2,7 +2,7 @@ import { DateTime } from 'luxon';
 import { loginPaced, restoreSession } from './site/auth.js';
 import { SiteClient } from './site/client.js';
 import { readMarketState, getTypeMest } from './site/market.js';
-import { getRegFields, buildCreateZajavPayload, submitOrder } from './site/order.js';
+import { getRegFields, getRegPage, formatGuard, buildCreateZajavPayload, submitOrder } from './site/order.js';
 import { getBookings } from './site/bookings.js';
 import { loadSession, saveSession, markDone, isDone } from './session.js';
 import { waitUntil } from './scheduler.js';
@@ -85,11 +85,16 @@ async function fireShot(ctx, client, payload, { dryRun }) {
 async function warmupAccount(ctx, predicted) {
   const { tag, client } = ctx;
   try {
-    const [fields, tm] = await Promise.all([
-      getRegFields(client),
+    const [page, tm] = await Promise.all([
+      getRegPage(client),
       getTypeMest(client, config.site.rinokId),
     ]);
+    const { fields } = page;
     ctx.fields = fields;
+    // Разведка защиты (этап ext-0): разбираем ТОТ ЖЕ HTML, что уже скачан строкой выше.
+    // Ни одного дополнительного запроса к сайту — только парсинг уже полученного тела.
+    ctx.guard = page.guard;
+    alog(tag, formatGuard(page.guard));
     ctx.defaultType = tm.types[0]?.value ?? 2;
     ctx.predicted = predicted;
     // Прогрев доп-сокетов мультиконнекта (этап 21): устанавливаем TCP/TLS заранее,
@@ -122,8 +127,11 @@ export async function warmConnection(ctx) {
       (async () => {
         // Освежаем поля на основном сокете; доп-сокеты мультиконнекта просто прогреваем
         // (устанавливаем/держим горячим TCP/TLS) и обновляем на них общую куку сессии.
-        const fields = await getRegFields(ctx.client);
-        ctx.fields = fields;
+        const page = await getRegPage(ctx.client);
+        ctx.fields = page.fields;
+        // Тот же единственный GET, что и раньше: заодно освежаем картину защиты
+        // (виджет могли поставить/снять между 23:55 и 23:59).
+        ctx.guard = page.guard;
         if (clients.length > 1) {
           await Promise.all(clients.slice(1).map((c) => getRegFields(c).catch(() => {})));
           for (const c of clients.slice(1)) {

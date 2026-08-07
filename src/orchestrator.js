@@ -173,7 +173,18 @@ export async function runNightly(
   // Тайминг подачи разработчику — точность выстрела + время КАЖДОЙ заявки (1-й и 2-й)
   // по КАЖДОМУ аккаунту, одним сообщением (этап 18).
   await notifier
-    .notifyDev(timingNotice({ drift, results, dryRun: config.timing.dryRun, clock, rtt, sendAhead }))
+    .notifyDev(
+      timingNotice({
+        drift,
+        results,
+        dryRun: config.timing.dryRun,
+        clock,
+        rtt,
+        sendAhead,
+        // Разбор защиты формы с прогрева (этап ext-0) — уже лежит в ctx, новых запросов нет.
+        guards: contexts.map((c) => ({ tag: c.tag, guard: c.guard })),
+      }),
+    )
     .catch(() => {});
   // Персональный тайминг жене/мужу — каждому на ЕГО кабинет (1-я и 2-я заявка),
   // только при успехе подачи этого кабинета (этап 18). Роль аккаунта берётся из

@@ -4,6 +4,7 @@
 // Подставляемые значения экранируем esc() — Telegram HTML требует &<> экранировать.
 import { DateTime } from 'luxon';
 import { config } from './config.js';
+import { formatGuard } from './site/order.js';
 
 const ASSORT_LABELS = { 1: 'картофель', 2: 'овощи', 3: 'зелень', 4: 'плоды', 5: 'ягоды', 6: 'яблоки' };
 
@@ -91,7 +92,7 @@ function submitTimes(r) {
 
 // Тайминг подачи для разработчика: точность выстрела + время КАЖДОЙ заявки (1-й и
 // 2-й) по КАЖДОМУ аккаунту. Отдельным сообщением, только dev.
-export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhead } = {}) {
+export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhead, guards = [] } = {}) {
   const lines = [`<b>⏱ Тайминг подачи (00:00)</b>${dryRun ? ' <i>(тест)</i>' : ''}`, ''];
   if (drift != null) {
     lines.push(`Точность выстрела: <b>${drift >= 0 ? '+' : ''}${drift} мс</b> от 00:00:00.000`);
@@ -108,6 +109,19 @@ export function timingNotice({ drift, results = [], dryRun, clock, rtt, sendAhea
   // RTT/джиттер до сайта (этап 20): чем меньше и стабильнее, тем ближе к первому месту.
   if (rtt && rtt.rttMinMs != null) {
     lines.push(`Сеть: RTT min <b>${rtt.rttMinMs} мс</b> / медиана ${rtt.rttMedianMs} мс, джиттер ${rtt.jitterMs} мс`);
+  }
+  // Проверка на робота на странице подачи (этап ext-0). Разобрано из HTML прогрева,
+  // лишних запросов к сайту не делается. Одинаковая картина по кабинетам — одна строка,
+  // разная — с пометкой, у какого кабинета что.
+  const seenGuards = new Map();
+  for (const g of guards) {
+    if (!g || !g.guard) continue;
+    const line = formatGuard(g.guard);
+    if (!seenGuards.has(line)) seenGuards.set(line, []);
+    seenGuards.get(line).push(g.tag);
+  }
+  for (const [line, tags] of seenGuards) {
+    lines.push(seenGuards.size === 1 ? esc(line) : `${esc(line)} <i>(${esc(tags.join(', '))})</i>`);
   }
   for (const r of results) {
     lines.push(`<b>${esc(r.fio || r.tag)}</b>`);
