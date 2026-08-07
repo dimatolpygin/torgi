@@ -186,6 +186,17 @@ export const config = {
     accountRoles: parseAccountRoles(process.env.ACCOUNT_ROLES),
   },
 
+  // Приёмник итогов от расширения Chrome (Веха 3, этап ext-6). Подаёт браузер клиентки,
+  // а Telegram-бот живёт здесь — расширение шлёт сюда подписанный отчёт, бот пересылает
+  // его в чат теми же словами, что и свой. Дефолт БЕЗОПАСНЫЙ: без секрета служба не
+  // поднимается вовсе (открытый порт без проверки хуже, чем отсутствие уведомления).
+  extReport: {
+    secret: process.env.EXT_REPORT_SECRET || '',
+    enabled: !!process.env.EXT_REPORT_SECRET,
+    port: Number(process.env.EXT_REPORT_PORT || 8080),
+    path: process.env.EXT_REPORT_PATH || '/ext/report',
+  },
+
   // Мониторинг сервера (этап 16).
   health: {
     // Pre-flight: слать разработчику «жив, готов к подаче» при ночном прогреве.

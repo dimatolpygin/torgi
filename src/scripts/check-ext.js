@@ -1,4 +1,4 @@
-// UAT-скрипт этапов ext-1…ext-4: каркас расширения Chrome, считывание токена проверки,
+// UAT-скрипт этапов ext-1…ext-6: каркас расширения Chrome, считывание токена проверки,
 // сборка заявки и точный выстрел. Офлайн: манифест, синтаксис файлов, логика библиотек
 // (минское время, кабинет, годность токена, поправка часов, планировщик залпа) и
 // побайтовая сверка payload create_zajav с ботом. Точность выстрела не обещается,
@@ -9,6 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
+import http from 'node:http';
 import { buildCreateZajavPayload, parseGuard } from '../site/order.js';
 import { logger } from '../logger.js';
 
@@ -48,12 +49,26 @@ check(
   'право на эталон времени сужено до одного адреса',
   (manifest.host_permissions || []).filter((h) => !h.includes('gorod.it-minsk.by')).every((h) => /^https:\/\/[^/*]+\/[^*]+$/.test(h)),
 );
+// С этапа ext-6 добавилось ровно одно право — storage: в нём лежат адрес нашего сервера
+// и общее слово для отчёта (в коде их нет). Ничего сверх этого расширению не нужно.
 check(
-  'никаких дополнительных permissions',
-  !manifest.permissions || manifest.permissions.length === 0,
+  'из прав — только хранилище настроек',
+  JSON.stringify(manifest.permissions || []) === JSON.stringify(['storage']),
   JSON.stringify(manifest.permissions || []),
 );
-check('нет фонового скрипта (не нужен)', !manifest.background);
+// Адрес нашего сервера в манифесте не зашит: право на него человек выдаёт сам при
+// сохранении настроек. Поэтому по умолчанию расширение никуда, кроме сайта и эталона
+// времени, ходить не может.
+check(
+  'право на посторонний адрес — необязательное (спрашивается у человека)',
+  Array.isArray(manifest.optional_host_permissions) && manifest.optional_host_permissions.length > 0,
+  JSON.stringify(manifest.optional_host_permissions || []),
+);
+check(
+  'фоновый скрипт один и только ради отчёта',
+  manifest.background?.service_worker === 'background.js',
+  JSON.stringify(manifest.background || {}),
+);
 
 const cs = (manifest.content_scripts || [])[0];
 check(
@@ -72,7 +87,7 @@ for (const rel of declared) {
 const extras = ['popup.js', 'popup.css', 'README.md'];
 for (const rel of extras) check(`файл на месте: ${rel}`, fs.existsSync(path.join(EXT, rel)));
 
-for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'clocksync.js', 'content.js', 'popup.js']) {
+for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'lib/outcome.js', 'lib/report.js', 'clocksync.js', 'content.js', 'popup.js', 'background.js']) {
   let ok = true;
   let err = '';
   try {
@@ -368,7 +383,7 @@ check('не вошли в кабинет — сказано прямо', /каб
 // С этапа ext-4 в расширении появился ровно ОДИН сетевой запрос — замер часов, и живёт
 // он в отдельном файле clocksync.js, подключённом только к панели. На странице сайта
 // (content script и его библиотеки) способов отправки по-прежнему нет ни одного.
-const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js'];
+const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'lib/outcome.js'];
 const senders = [];
 for (const rel of extFiles) {
   const src = fs.readFileSync(path.join(EXT, rel), 'utf8');
@@ -377,7 +392,7 @@ for (const rel of extFiles) {
   }
 }
 check('на странице сайта у расширения нет ни одного способа отправки', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
-check('в манифесте нет прав на фоновые запросы', !manifest.background && !(manifest.permissions || []).includes('webRequest'));
+check('в манифесте нет прав на перехват чужих запросов', !(manifest.permissions || []).includes('webRequest'));
 
 const clocksyncSrc = fs.readFileSync(path.join(EXT, 'clocksync.js'), 'utf8');
 check('сетевой файл не подключён к странице сайта', !(cs.js || []).includes('clocksync.js'));
@@ -388,7 +403,7 @@ check(
 );
 // Главное для сайта: НИ ОДИН файл расширения к нему не обращается.
 const siteCalls = [];
-for (const rel of [...extFiles, 'clocksync.js']) {
+for (const rel of [...extFiles, 'clocksync.js', 'background.js', 'lib/report.js']) {
   const src = fs.readFileSync(path.join(EXT, rel), 'utf8');
   if (/(fetch|open|sendBeacon)\s*\([^)]*gorod\.it-minsk\.by/.test(src)) siteCalls.push(rel);
 }
@@ -526,9 +541,166 @@ const rep = shot.volleyReport({ localTargetMs: 1000, offsetMs: 0, starts: [1003,
 check('отчёт различает отклонение и разъезд', rep.driftMs === 3 && rep.spreadMs === 1, rep.text);
 check('вразнобой видно в тексте', /вразнобой/.test(shot.describeShot({ count: 2, driftMs: 2, spreadMs: 40, parallel: false })));
 
+// --- Этап ext-6: итог ночи и его доставка ------------------------------------
+logger.info('--- Итог ночи: разбор ответов сайта ---');
+const outcome = loadLib('lib/outcome.js', { formatDateRu: minsk.formatDateRu });
+const answered = (code, extra = {}) => ({ ok: true, result: { status: 200, text: JSON.stringify({ code, ...extra }) } });
+const BOOKING = minsk.bookingDateFor(minsk.nextRegistrationMidnight());
+
+check('code 201 — заявка принята', outcome.readAnswer(answered('201')).accepted === true);
+check('code 200 — тоже принята (кабинет создан)', outcome.readAnswer(answered('200')).accepted === true);
+const rejNamed = outcome.readAnswer(answered('500', { arr_date: 'no_date' }));
+check('отказ с полем — причина названа словами', rejNamed.accepted === false && /места разобрали/.test(rejNamed.reason), rejNamed.reason);
+// Ночи 06–07.08 показали главный реальный случай: code=500 и НИ ОДНОГО поля-ошибки.
+const rejMute = outcome.readAnswer(answered('500'));
+check('молчаливый отказ не выдумывает причину', /причину не назвал/.test(rejMute.reason), rejMute.reason);
+const rl = outcome.readAnswer({ ok: true, result: { status: 429, text: '' } });
+check('429 распознан как ограничение частоты', rl.kind === 'ratelimit' && /частот/.test(rl.reason));
+const notJson = outcome.readAnswer({ ok: true, result: { status: 200, text: '<html>Проверка на робота</html>' } });
+check('не-JSON распознан как страница, а не ответ', notJson.kind === 'notjson' && /страницу/.test(notJson.reason));
+check('упавшая отправка — это не отказ сайта', outcome.readAnswer({ ok: false, error: 'сокет отвалился' }).kind === 'network');
+check('тренировка видна как тренировка', outcome.readAnswer({ ok: true, result: { dryRun: true } }).kind === 'drill');
+
+const sumOk = outcome.summarize({ results: [answered('201'), answered('201')], booking: BOOKING, shot: { driftMs: 42, spreadMs: 1 } });
+check('2 из 2 — «принято»', sumOk.ok && sumOk.acceptedCount === 2 && /Принято 2 из 2/.test(sumOk.text), sumOk.text);
+const sumPart = outcome.summarize({ results: [answered('201'), answered('500')], booking: BOOKING });
+check('1 из 2 — «принято частично» с причиной', sumPart.partial && !sumPart.ok && /Принято 1 из 2/.test(sumPart.text), sumPart.text);
+const sumFail = outcome.summarize({ results: [answered('500'), answered('500')], booking: BOOKING });
+check('0 из 2 — отказ, причина одна, а не задвоенная', !sumFail.ok && sumFail.acceptedCount === 0 && sumFail.reasons.length === 1, sumFail.text);
+const sumDrill = outcome.summarize({ results: [{ ok: true, result: { dryRun: true } }], booking: BOOKING });
+check('тренировочный залп не выдаёт себя за боевой', sumDrill.drill && !sumDrill.ok && /на сайт ничего не ушло/.test(sumDrill.text), sumDrill.text);
+check('точность выстрела доезжает до итога', sumOk.driftMs === 42 && sumOk.spreadMs === 1);
+
+logger.info('--- Отчёт: что уходит наружу ---');
+const body = outcome.reportBody({
+  outcome: sumOk,
+  account: { fio: 'Иванова М. П.' },
+  booking: BOOKING,
+  now: 1_700_000_000_000,
+});
+const bodyJson = JSON.stringify(body);
+// Главное правило: наружу уходит ровно то, что человек и так увидит в Telegram.
+for (const forbidden of ['token', 'cf-turnstile', 'pass', 'cookie', 'gorodid', 'PERSN', 'n_mail', 't_contakt']) {
+  check(`в отчёте нет «${forbidden}»`, !bodyJson.toLowerCase().includes(forbidden.toLowerCase()));
+}
+check('в отчёте есть кабинет, дата и итог', body.account.fio === 'Иванова М. П.' && body.booking.date === BOOKING.dateStr && !!body.text);
+
+logger.info('--- Подпись отчёта: расширение и сервер понимают друг друга ---');
+const { signReport, verifyReport, createExtReportHandler, SIG_HEADER, TS_HEADER } = await import('../ext-report.js');
+const report = loadLib('lib/report.js', { crypto: globalThis.crypto, TextEncoder, Uint8Array, setTimeout, clearTimeout, AbortController, fetch: undefined });
+const SECRET = 'секрет-для-проверки-длиннее-16';
+const TS = '1700000000000';
+const extSig = await report.signBody(TS, bodyJson, SECRET, globalThis.crypto.subtle);
+check('подпись расширения совпадает с подписью сервера', extSig === signReport(TS, bodyJson, SECRET), extSig.slice(0, 16) + '…');
+check('сервер принимает правильную подпись', verifyReport({ ts: TS, signature: extSig, bodyJson, secret: SECRET, now: Number(TS) }).ok);
+check('подделанное тело не проходит', !verifyReport({ ts: TS, signature: extSig, bodyJson: bodyJson.replace('Иванова', 'Петрова'), secret: SECRET, now: Number(TS) }).ok);
+check('чужой секрет не проходит', !verifyReport({ ts: TS, signature: extSig, bodyJson, secret: SECRET + 'x', now: Number(TS) }).ok);
+check('старый отчёт не переслать повторно', !verifyReport({ ts: TS, signature: extSig, bodyJson, secret: SECRET, now: Number(TS) + 10 * 60_000 }).ok);
+check('отчёт «из будущего» тоже отклоняется', !verifyReport({ ts: TS, signature: extSig, bodyJson, secret: SECRET, now: Number(TS) - 10 * 60_000 }).ok);
+check('без секрета сервер не принимает ничего', !verifyReport({ ts: TS, signature: extSig, bodyJson, secret: '', now: Number(TS) }).ok);
+check('подпись другой длины не роняет сервер', !verifyReport({ ts: TS, signature: 'abc', bodyJson, secret: SECRET, now: Number(TS) }).ok);
+
+logger.info('--- Настройки доставки и живучесть ---');
+check('без адреса отчёт не уйдёт и это сказано', /адрес/.test(report.reportSettingsProblems({ secret: SECRET })[0]));
+check('короткий секрет не принимается', report.reportSettingsProblems({ url: 'https://x/y', secret: 'коротко' }).some((p) => /16 символов/.test(p)));
+check('настройки в порядке — претензий нет', report.reportSettingsProblems({ url: 'https://x/y', secret: SECRET }).length === 0);
+
+let seen = null;
+const okSend = await report.sendReport({
+  url: 'https://example.test/ext/report',
+  secret: SECRET,
+  body,
+  now: Number(TS),
+  subtle: globalThis.crypto.subtle,
+  fetchImpl: async (url, init) => {
+    seen = { url, init };
+    return { status: 200 };
+  },
+});
+check('отчёт уходит с подписью и временем в заголовках', okSend.ok && seen.init.headers['x-bron-signature'] === extSig && seen.init.headers['x-bron-ts'] === TS);
+const deadServer = await report.sendReport({ url: 'https://example.test/x', secret: SECRET, body, subtle: globalThis.crypto.subtle, fetchImpl: async () => ({ status: 502 }) });
+check('сервер лежит — отчёт честно говорит «не ушло», но не падает', deadServer.ok === false && /502/.test(deadServer.error));
+const noNet = await report.sendReport({ url: 'https://example.test/x', secret: SECRET, body, subtle: globalThis.crypto.subtle, fetchImpl: async () => { throw new Error('сети нет'); } });
+check('интернета нет — исключение не вылетает наружу', noNet.ok === false && /сети нет/.test(noNet.error));
+
+// Отчёт вторичен по отношению к подаче: он вызывается ПОСЛЕ залпа и его результат
+// никуда не влияет. Проверяем это по коду страницы, а не на словах.
+const contentAfterShot = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+check(
+  'отчёт отправляется только после залпа',
+  contentAfterShot.indexOf('lastShot = report') < contentAfterShot.indexOf('deliverReport(report, bookingAtArm'),
+);
+check('итог считается сразу после залпа и лежит в состоянии для панели', /report\.outcome = summarize\(/.test(contentAfterShot) && /outcome: lastShot/.test(contentAfterShot));
+check('панель показывает итог сама, без обновления страницы', fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8').includes('renderOutcome(state)'));
+
+// Секрета в репозитории быть не должно — ни в расширении, ни в коде бота.
+const repoFiles = ['ext/background.js', 'ext/popup.js', 'ext/lib/report.js', 'ext/content.js', 'src/ext-report.js', 'src/config.js'];
+const leaks = [];
+for (const rel of repoFiles) {
+  const src = fs.readFileSync(path.resolve(rel), 'utf8');
+  // Присваивание секрету строкового литерала = утечка. Чтение из настроек/окружения — нет.
+  if (/(reportSecret|EXT_REPORT_SECRET)\s*[:=]\s*['"][^'"]{6,}/.test(src)) leaks.push(rel);
+}
+check('общего слова нет в коде — только в настройках и .env', leaks.length === 0, leaks.join(', ') || 'ни одного литерала');
+
+logger.info('--- Живой прогон: расширение → сервер → Telegram ---');
+const sent = [];
+const handler = createExtReportHandler({ notifier: { notify: async (t) => sent.push(t) }, secret: SECRET, path: '/ext/report' });
+const srv = http.createServer(handler);
+await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+const base = `http://127.0.0.1:${srv.address().port}`;
+
+async function post(pathname, json, { ts = String(Date.now()), sig = null, secret = SECRET } = {}) {
+  const signature = sig || signReport(ts, json, secret);
+  const res = await fetch(base + pathname, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', [SIG_HEADER]: signature, [TS_HEADER]: ts },
+    body: json,
+  });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
+const liveBody = JSON.stringify(outcome.reportBody({ outcome: sumOk, account: { fio: 'Иванова М. П.' }, booking: BOOKING }));
+const good = await post('/ext/report', liveBody);
+check('правильный отчёт принят сервером', good.status === 200 && good.body.ok === true, `HTTP ${good.status}`);
+check('в Telegram ушёл один итог и он читается человеком', sent.length === 1 && /Итог ночной подачи/.test(sent[0]) && /забронировано/.test(sent[0]), sent[0]?.split('\n')[0]);
+const tampered = await post('/ext/report', liveBody.replace('Иванова', 'Петрова'), { sig: signReport(String(Date.now()), liveBody, SECRET) });
+check('подделанный отчёт отбит', tampered.status === 401 && sent.length === 1, `HTTP ${tampered.status}`);
+const wrongSecret = await post('/ext/report', liveBody, { secret: 'другое-длинное-слово-1234' });
+check('отчёт с чужим словом отбит', wrongSecret.status === 401 && sent.length === 1, `HTTP ${wrongSecret.status}`);
+const wrongPath = await post('/ext/other', liveBody);
+check('посторонний адрес на сервере — 404', wrongPath.status === 404);
+// Telegram упал — отчёт всё равно принят: иначе расширение показало бы клиентке
+// «отчёт не ушёл», хотя проблема не у неё.
+const brokenTg = createExtReportHandler({ notifier: { notify: async () => { throw new Error('telegram лежит'); } }, secret: SECRET });
+const srv2 = http.createServer(brokenTg);
+await new Promise((r) => srv2.listen(0, '127.0.0.1', r));
+const ts2 = String(Date.now());
+const res2 = await fetch(`http://127.0.0.1:${srv2.address().port}/ext/report`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', [SIG_HEADER]: signReport(ts2, liveBody, SECRET), [TS_HEADER]: ts2 },
+  body: liveBody,
+});
+check('падение Telegram не делает ночь «неотчитавшейся»', res2.status === 200);
+srv.close();
+srv2.close();
+
+// Тексты в Telegram — как у бота, чтобы клиентка не различала источник.
+const { extResultText } = await import('../messages.js');
+const tgOk = extResultText(outcome.reportBody({ outcome: sumOk, account: { fio: 'Иванова М. П.' }, booking: BOOKING }));
+const tgPart = extResultText(outcome.reportBody({ outcome: sumPart, account: { fio: 'Иванова М. П.' }, booking: BOOKING }));
+const tgFail = extResultText(outcome.reportBody({ outcome: sumFail, account: { fio: 'Иванова М. П.' }, booking: BOOKING }));
+const tgDrill = extResultText(outcome.reportBody({ outcome: sumDrill, account: { fio: 'Иванова М. П.' }, booking: BOOKING }));
+check('успех — зелёный и с числом мест', /🟢/.test(tgOk) && /2 места/.test(tgOk));
+check('частично — жёлтый и просит добавить вручную', /🟡/.test(tgPart) && /вручную/.test(tgPart));
+check('отказ — красный и с причиной', /🔴/.test(tgFail) && /Причина/.test(tgFail));
+check('тренировка помечена тренировкой', /тренировка/.test(tgDrill));
+check('видно, что подало расширение, а не бот', /из браузера/.test(tgOk));
+check('точность выстрела в сообщении есть', /Точность выстрела/.test(tgOk));
+
 // --- Итог -------------------------------------------------------------------
 if (failed) {
   logger.error(`Проверка не пройдена: ошибок ${failed}`);
   process.exit(1);
 }
-logger.info('Все проверки этапов ext-1…ext-4 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');
+logger.info('Все проверки этапов ext-1…ext-6 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');

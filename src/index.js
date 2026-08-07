@@ -6,6 +6,7 @@ import { getAccounts } from './accounts.js';
 import { createNotifier } from './notify.js';
 import { startScheduler } from './orchestrator.js';
 import { startSessionKeeper } from './keeper.js';
+import { startExtReportServer } from './ext-report.js';
 import { nextRegistrationMidnight } from './scheduler.js';
 import { startedNotice, stoppedNotice } from './messages.js';
 
@@ -67,11 +68,16 @@ async function main() {
   // именно вход (POST /login/) ловит бан IP на час и стоил нам ночей 30.07 и 31.07.2026.
   const stopKeeper = startSessionKeeper(getAccounts);
 
+  // Приёмник итогов от расширения Chrome (Веха 3). Без EXT_REPORT_SECRET не поднимается —
+  // на подачу бота не влияет никак.
+  const stopExtReport = startExtReportServer({ notifier });
+
   logger.info('✅ Каркас жив, Telegram подключён. Планировщик ночной подачи активен.');
 
   const shutdown = async (signal) => {
     logger.info(`Получен ${signal}, завершаюсь…`);
     stopKeeper();
+    stopExtReport();
     await notifier.notifyDev(stoppedNotice()).catch(() => {});
     notifier.stop(signal);
     await pool.end().catch(() => {});

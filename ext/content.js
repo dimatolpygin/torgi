@@ -162,12 +162,43 @@ function dryRunSend(index) {
   return { dryRun: true, index, at: Date.now() };
 }
 
+// Отчёт о ночи фоновому скрипту, а он — нашему серверу (ext-6). Вторичен по отношению
+// к подаче: вызывается ПОСЛЕ залпа, ничего не ждёт и не умеет сорвать заявку. Даже если
+// интернет отвалился или сервер лежит, здесь всё закончится записью в lastReport.
+let lastReport = null;
+
+function deliverReport(report, booking) {
+  const body = reportBody({
+    outcome: report.outcome,
+    account: accountFromFields(collectFields()),
+    booking,
+    now: Date.now(),
+  });
+  lastReport = { at: Date.now(), sent: false, ok: false, error: null };
+  try {
+    chrome.runtime.sendMessage({ type: 'SEND_REPORT', body }, (res) => {
+      void chrome.runtime.lastError;
+      lastReport = {
+        at: Date.now(),
+        sent: true,
+        ok: !!(res && res.ok),
+        error: res && res.error ? res.error : chrome.runtime.lastError ? 'фоновый скрипт не ответил' : null,
+      };
+    });
+  } catch (e) {
+    lastReport = { at: Date.now(), sent: true, ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
 function armShot(targetMs, count) {
   const local = localTargetMs(targetMs, clockState.offsetMs);
   if (armedFor === local) return { ok: true, already: true, localTargetMs: local };
   if (local - Date.now() <= 0) return { ok: false, error: 'момент уже прошёл' };
 
   armedFor = local;
+  // Дату брони фиксируем ПРИ ЗАВОДЕ: после полуночи «ближайшая ночь» становится
+  // следующей, и итог рассказывал бы про завтрашнюю дату вместо только что поданной.
+  const bookingAtArm = bookingDateFor(nextRegistrationMidnight());
   shootAt({
     localTargetMs: local,
     offsetMs: clockState.offsetMs,
@@ -176,8 +207,12 @@ function armShot(targetMs, count) {
   }).then((report) => {
     report.dryRun = true;
     report.targetMs = targetMs;
+    // Итог считаем СРАЗУ после залпа и кладём в состояние: панель забирает его следующим
+    // же опросом (раз в секунду), поэтому «принято 2 из 2» видно без обновления страницы.
+    report.outcome = summarize({ results: report.results, booking: bookingAtArm, shot: report });
     lastShot = report;
     armedFor = null;
+    deliverReport(report, bookingAtArm);
   });
 
   return { ok: true, localTargetMs: local, inMs: local - Date.now() };
@@ -235,6 +270,8 @@ function readState() {
       localTargetMs: localTargetMs(target.ms, clockState.offsetMs),
     },
     shot: lastShot,
+    outcome: lastShot ? lastShot.outcome || null : null,
+    report: lastReport,
     armedFor,
   };
   state.readiness = readiness(state);

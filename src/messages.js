@@ -278,6 +278,38 @@ export function runResultText(results, { dryRun = false, date } = {}) {
   return lines.join('\n');
 }
 
+// Итог ночи, поданный РАСШИРЕНИЕМ (Веха 3, этап ext-6). Формат намеренно повторяет
+// «Итог ночной подачи» бота: клиентка не должна разбираться, кто именно подал.
+export function extResultText(report = {}) {
+  const r = report || {};
+  const n = r.acceptedCount || 0;
+  const total = r.count || 0;
+  const when = r.booking?.date ? bookingDateShort(r.booking.date) : '—';
+  const lines = [`<b>Итог ночной подачи</b> <i>(из браузера)</i>${r.drill ? ' <i>(тренировка)</i>' : ''}`];
+  if (r.booking?.date) lines.push(`Дата брони: <code>${esc(bookingDateLong(r.booking.date))}</code>`);
+  lines.push(`Ассортимент: ${esc(assortText())} · Рынок: ${esc(config.site.marketName)}`);
+  lines.push('');
+  lines.push(`<b>${esc(r.account?.fio || 'кабинет')}</b>`);
+
+  if (r.drill) lines.push('<i>тренировка — на сайт ничего не отправлялось</i>');
+  else if (r.ok) lines.push(`🟢 забронировано <b>${n} ${placesWord(n)}</b> на <b>${when}</b>`);
+  else if (n > 0) lines.push(`🟡 взято ${n} из ${total} ${placesWord(total)} на ${when} — <u>добавьте недостающее вручную</u>`);
+  else lines.push(`🔴 не принято ни одной заявки на ${when}`);
+
+  const reasons = (r.reasons || []).filter(Boolean);
+  if (reasons.length) lines.push(`Причина: <i>${esc(reasons.join('; '))}</i>`);
+  if (r.shot && r.shot.driftMs != null) {
+    // fmtOffset уже возвращает жирную разметку — в <code> её заворачивать нельзя,
+    // Telegram не понимает вложенные сущности внутри моноширинного блока.
+    lines.push(`Точность выстрела: ${fmtOffset(r.shot.driftMs)} от полуночи`);
+  }
+  if (!r.drill && !r.ok) {
+    lines.push('');
+    lines.push('<b>Часть заявок не прошла.</b> <u>Подайте вручную.</u>');
+  }
+  return lines.join('\n');
+}
+
 // Заметный префикс для тревожных сообщений.
 export function alertText(body) {
   return `<b>⚠ ВНИМАНИЕ</b>\n${body}`;

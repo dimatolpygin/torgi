@@ -88,6 +88,82 @@ function renderShot(shot) {
   el.classList.toggle('ok', good);
 }
 
+// Итог ночи. Приходит из content script вместе с остальным состоянием (опрос раз в
+// секунду), поэтому появляется сам — обновлять страницу не нужно.
+function renderOutcome(state) {
+  const box = $('outcome');
+  const o = state && state.outcome;
+  if (!o) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = '';
+  $('outcome-text').textContent = o.text;
+  box.classList.toggle('bad', !o.ok && !o.drill);
+  box.classList.toggle('ok', !!o.ok);
+
+  const r = state.report;
+  const el = $('outcome-report');
+  if (!r) el.textContent = '';
+  else if (!r.sent) el.textContent = 'Отчёт в Telegram: отправляю…';
+  else if (r.ok) el.textContent = 'Отчёт в Telegram отправлен.';
+  else el.textContent = `Отчёт в Telegram не ушёл (${r.error || 'причина неизвестна'}) — на саму подачу это не влияет.`;
+}
+
+// Настройки доставки. Секрета в коде нет: человек вводит его один раз, лежит он в
+// хранилище этого компьютера.
+function storageGet(keys) {
+  return new Promise((resolve) => {
+    if (!(chrome.storage && chrome.storage.local)) return resolve({});
+    chrome.storage.local.get(keys, (v) => {
+      void chrome.runtime.lastError;
+      resolve(v || {});
+    });
+  });
+}
+
+async function loadReportSettings() {
+  const v = await storageGet(['reportUrl', 'reportSecret']);
+  $('rep-url').value = v.reportUrl || '';
+  // Само значение секрета в поле не возвращаем — показываем, что оно задано.
+  $('rep-secret').placeholder = v.reportSecret ? 'задано (введите заново, чтобы сменить)' : 'длинная строка от разработчика';
+  showReportState({ url: v.reportUrl || '', secret: v.reportSecret || '' });
+}
+
+function showReportState(s) {
+  const problems = reportSettingsProblems(s);
+  const el = $('rep-state');
+  el.textContent = problems.length ? `Итог в Telegram пока не уйдёт: ${problems.join('; ')}` : 'Готово — итог уйдёт в Telegram сам.';
+  el.classList.toggle('bad', problems.length > 0);
+  el.classList.toggle('ok', problems.length === 0);
+}
+
+async function saveReportSettings() {
+  const url = $('rep-url').value.trim();
+  const secret = $('rep-secret').value;
+  const current = await storageGet(['reportSecret']);
+  // Пустое поле секрета = «не менять»: чтобы правка адреса не стирала уже введённое слово.
+  const nextSecret = secret || current.reportSecret || '';
+  const problems = reportSettingsProblems({ url, secret: nextSecret });
+  if (problems.length) return showReportState({ url, secret: nextSecret });
+
+  // Право на посторонний адрес спрашиваем у человека и только по его нажатию: в манифесте
+  // оно необязательное, поэтому расширение по умолчанию никуда, кроме сайта брони, не ходит.
+  if (chrome.permissions && chrome.permissions.request) {
+    const origin = `${new URL(url).origin}/*`;
+    const granted = await new Promise((resolve) => chrome.permissions.request({ origins: [origin] }, (g) => resolve(!!g)));
+    if (!granted) {
+      $('rep-state').textContent = 'Без разрешения на этот адрес отчёт отправить нельзя.';
+      $('rep-state').classList.add('bad');
+      return;
+    }
+  }
+  chrome.storage.local.set({ reportUrl: url, reportSecret: nextSecret }, () => void chrome.runtime.lastError);
+  $('rep-secret').value = '';
+  $('rep-secret').placeholder = 'задано (введите заново, чтобы сменить)';
+  showReportState({ url, secret: nextSecret });
+}
+
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -136,6 +212,7 @@ function render(state) {
     renderToken();
     renderPlan(null);
     renderShot(null);
+    renderOutcome(null);
     return;
   }
 
@@ -156,6 +233,7 @@ function render(state) {
   renderToken();
   renderPlan(state.plan);
   renderShot(state.shot);
+  renderOutcome(state);
 }
 
 async function refresh() {
@@ -201,6 +279,8 @@ async function main() {
   const tab = await activeTab();
   tabId = tab && tab.id != null ? tab.id : null;
   $('drill-btn').addEventListener('click', armDrill);
+  $('rep-save').addEventListener('click', saveReportSettings);
+  await loadReportSettings();
   await refresh();
   await measureClock();
   // Раз в секунду перечитываем страницу: человек проходит проверку при открытой панели

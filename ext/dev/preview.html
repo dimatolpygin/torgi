@@ -35,6 +35,9 @@
         <option value="expiring">токен вот-вот истечёт</option>
         <option value="expired">токен истёк</option>
         <option value="guest">кабинет не виден (не вошли на сайт)</option>
+        <option value="done-ok">итог ночи: приняты обе заявки</option>
+        <option value="done-part">итог ночи: принята одна из двух</option>
+        <option value="done-fail">итог ночи: отказ сайта</option>
       </select>
     </div>
 
@@ -86,8 +89,27 @@
       <div id="drill-result" class="drill-result"></div>
     </div>
 
+    <div id="outcome" class="plan outcome">
+      <div class="label">Итог ночи</div>
+      <div id="outcome-text" class="plan-text">—</div>
+      <div id="outcome-report" class="drill-note"></div>
+    </div>
+
+    <details class="settings">
+      <summary>Куда слать итог в Telegram</summary>
+      <div class="settings-note">
+        Итог уходит на наш сервер, а он пересылает его в тот же Telegram, что и раньше.
+        Адрес и общее слово даёт разработчик; хранятся они только на этом компьютере.
+      </div>
+      <label class="field">Адрес сервера<input id="rep-url" type="url" placeholder="https://пример/ext/report" /></label>
+      <label class="field">Общее слово<input id="rep-secret" type="password" placeholder="длинная строка от разработчика" /></label>
+      <button id="rep-save" type="button">Сохранить</button>
+      <div id="rep-state" class="drill-note"></div>
+    </details>
+
     <div class="foot">
-      Панель пока только смотрит. Заявку не подаёт — это следующие этапы.
+      Панель пока только смотрит. Заявку не подаёт — это следующий этап. Итог ночи
+      она уже умеет пересылать в Telegram.
     </div>
 
     <script>
@@ -100,8 +122,31 @@
       // Последний тренировочный залп — механика настоящая, отправка заглушена.
       let previewShot = null;
 
+      // Итог ночи для сценариев «done-*»: ответы сайта выдуманные, разбор настоящий —
+      // та же summarize из lib/outcome.js, которая будет работать вживую.
+      function previewOutcome(scenario, booking) {
+        const good = { ok: true, result: { status: 200, text: JSON.stringify({ code: '201' }) } };
+        const bad = { ok: true, result: { status: 200, text: JSON.stringify({ code: '500' }) } };
+        const sets = { 'done-ok': [good, good], 'done-part': [good, bad], 'done-fail': [bad, bad] };
+        if (!sets[scenario]) return null;
+        return summarize({ results: sets[scenario], booking, shot: { driftMs: 42, spreadMs: 1, atTrueMs: Date.now() } });
+      }
+
+      // Хранилище и разрешения в предпросмотре — в памяти, на время открытой страницы.
+      const previewStore = {};
+
       window.chrome = {
         runtime: { lastError: null },
+        storage: {
+          local: {
+            get: (keys, cb) => cb(Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map((k) => [k, previewStore[k]]))),
+            set: (obj, cb) => {
+              Object.assign(previewStore, obj);
+              if (cb) cb();
+            },
+          },
+        },
+        permissions: { request: (_p, cb) => cb(true) },
         tabs: {
           query: async () => [{ id: 1 }],
           sendMessage: (_tabId, msg, cb) => {
@@ -114,6 +159,7 @@
                 sendOne: (i) => ({ dryRun: true, i }),
               }).then((r) => {
                 r.dryRun = true;
+                r.outcome = summarize({ results: r.results, booking: bookingDateFor(nextRegistrationMidnight()), shot: r });
                 previewShot = r;
               });
               return void cb({ ok: true, armed: { ok: true } });
@@ -197,6 +243,8 @@
               },
               clock: { sync: null, offsetMs: 0, verdict: clockVerdict(null), localTargetMs: target.ms },
               shot: previewShot,
+              outcome: previewOutcome(scenario, booking) || (previewShot ? previewShot.outcome : null),
+              report: previewOutcome(scenario, booking) ? { at: now, sent: true, ok: true } : null,
               armedFor: null,
             };
             state.readiness = readiness(state);
@@ -211,6 +259,8 @@
     <script src="../lib/order.js"></script>
     <script src="../lib/clock.js"></script>
     <script src="../lib/shot.js"></script>
+    <script src="../lib/outcome.js"></script>
+    <script src="../lib/report.js"></script>
     <script src="../popup.js"></script>
   </body>
 </html>
