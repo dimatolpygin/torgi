@@ -1,0 +1,109 @@
+/* Панель узкая и читается ночью, спросонья: крупный отсчёт, крупный статус,
+   никаких мелких серых надписей на важном. */
+:root {
+  --bg: #ffffff;
+  --fg: #1b1b1f;
+  --muted: #6b7280;
+  --line: #e5e7eb;
+  --ok-bg: #e8f5e9;
+  --ok-fg: #1b5e20;
+  --wait-bg: #fff8e1;
+  --wait-fg: #7a5200;
+  --bad-bg: #fdeaea;
+  --bad-fg: #8c1c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181c;
+    --fg: #f2f3f5;
+    --muted: #9aa1ab;
+    --line: #2c2e34;
+    --ok-bg: #16301b;
+    --ok-fg: #9be0a8;
+    --wait-bg: #322a12;
+    --wait-fg: #f0d089;
+    --bad-bg: #3a1c1c;
+    --bad-fg: #f0a5a5;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  padding: 14px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.card {
+  text-align: center;
+  padding: 10px 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.countdown {
+  font-size: 40px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
+}
+
+.target {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.label {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.value {
+  font-weight: 600;
+  text-align: right;
+}
+
+.status {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+.status-ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.status-wait {
+  background: var(--wait-bg);
+  color: var(--wait-fg);
+}
+
+.status-bad {
+  background: var(--bad-bg);
+  color: var(--bad-fg);
+}
+
+.foot {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}

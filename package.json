@@ -10,7 +10,9 @@
     "check:auth": "node src/scripts/check-auth.js",
     "check:telegram": "node src/scripts/check-telegram.js",
     "check:storage": "node src/scripts/check-storage.js",
-    "check:e2e": "node src/scripts/check-e2e.js"
+    "check:e2e": "node src/scripts/check-e2e.js",
+    "check:guard": "node src/scripts/check-guard.js",
+    "check:ext": "node src/scripts/check-ext.js"
   },
   "engines": {
     "node": ">=20"

@@ -1,0 +1,65 @@
+<!doctype html>
+<!--
+  Предпросмотр панели БЕЗ Chrome и без сайта: открывается двойным кликом в браузере.
+  Chrome API подменён заглушкой, которая отвечает так, будто открыта страница подачи
+  залогиненного кабинета. Нужен только для разработки и показа — в manifest.json НЕ входит
+  и в работе расширения не участвует.
+-->
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Предпросмотр панели «Бронь»</title>
+    <link rel="stylesheet" href="../popup.css" />
+  </head>
+  <body>
+    <div class="card">
+      <div class="label">До подачи</div>
+      <div id="countdown" class="countdown">--:--:--</div>
+      <div id="target" class="target">&nbsp;</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Кабинет</div>
+      <div id="account" class="value">проверяю…</div>
+    </div>
+
+    <div class="row">
+      <div class="label">Дата брони</div>
+      <div id="booking" class="value">—</div>
+    </div>
+
+    <div id="status" class="status status-wait">Открываю страницу подачи…</div>
+
+    <div class="foot">
+      Этап 1: панель только смотрит. Заявку пока не подаёт — это следующие этапы.
+    </div>
+
+    <script>
+      // Заглушка Chrome API: выдаёт вымышленный кабинет (никаких настоящих данных).
+      window.chrome = {
+        runtime: { lastError: null },
+        tabs: {
+          query: async () => [{ id: 1 }],
+          sendMessage: (_tabId, _msg, cb) => {
+            const target = nextRegistrationMidnight();
+            const account = accountFromFields({
+              fam: 'Иванова',
+              name: 'Мария',
+              otc: 'Петровна',
+              t_contakt: '+375291234567',
+              n_mail: 'ivanova@example.by',
+              type_person: 'fiz',
+              is_login: '1',
+            });
+            const state = { onSubmitPage: true, account, target, booking: bookingDateFor(target) };
+            state.readiness = readiness(state);
+            cb({ ok: true, state });
+          },
+        },
+      };
+    </script>
+    <script src="../lib/minsk.js"></script>
+    <script src="../lib/account.js"></script>
+    <script src="../popup.js"></script>
+  </body>
+</html>
