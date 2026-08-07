@@ -171,3 +171,39 @@ body {
   font-size: 11px;
   line-height: 1.35;
 }
+
+/* Тренировочный залп (этап ext-4): проверка точности выстрела вхолостую. */
+.drill {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line, rgba(0, 0, 0, 0.1));
+}
+
+.drill button {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--wait-bg);
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.15));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.drill button:hover {
+  filter: brightness(0.97);
+}
+
+.drill-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.drill-result {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.35;
+}

@@ -1,6 +1,8 @@
-// UAT-скрипт этапов ext-1…ext-3: каркас расширения Chrome, считывание токена проверки
-// и сборка заявки. Офлайн: манифест, синтаксис файлов, логика библиотек (минское время,
-// кабинет, годность токена) и побайтовая сверка payload create_zajav с ботом.
+// UAT-скрипт этапов ext-1…ext-4: каркас расширения Chrome, считывание токена проверки,
+// сборка заявки и точный выстрел. Офлайн: манифест, синтаксис файлов, логика библиотек
+// (минское время, кабинет, годность токена, поправка часов, планировщик залпа) и
+// побайтовая сверка payload create_zajav с ботом. Точность выстрела не обещается,
+// а МЕРЯЕТСЯ — планировщик прогоняется здесь же настоящими таймерами.
 // В сеть не ходит, Chrome не нужен.
 // Запуск: node src/scripts/check-ext.js
 import fs from 'node:fs';
@@ -37,9 +39,14 @@ const manifest = JSON.parse(fs.readFileSync(path.join(EXT, 'manifest.json'), 'ut
 check('manifest_version = 3', manifest.manifest_version === 3, String(manifest.manifest_version));
 check('есть имя и версия', !!manifest.name && /^\d+\.\d+\.\d+$/.test(manifest.version), `${manifest.name} ${manifest.version}`);
 check(
-  'права только на сам сайт',
-  JSON.stringify(manifest.host_permissions) === JSON.stringify(['https://gorod.it-minsk.by/*']),
+  'права только на сам сайт и на эталон времени',
+  JSON.stringify(manifest.host_permissions) === JSON.stringify(['https://gorod.it-minsk.by/*', 'https://cloudflare.com/cdn-cgi/trace']),
   JSON.stringify(manifest.host_permissions),
+);
+// Эталон времени пущен ровно на одну служебную страницу, а не на весь домен.
+check(
+  'право на эталон времени сужено до одного адреса',
+  (manifest.host_permissions || []).filter((h) => !h.includes('gorod.it-minsk.by')).every((h) => /^https:\/\/[^/*]+\/[^*]+$/.test(h)),
 );
 check(
   'никаких дополнительных permissions',
@@ -65,7 +72,7 @@ for (const rel of declared) {
 const extras = ['popup.js', 'popup.css', 'README.md'];
 for (const rel of extras) check(`файл на месте: ${rel}`, fs.existsSync(path.join(EXT, rel)));
 
-for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'content.js', 'popup.js']) {
+for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'clocksync.js', 'content.js', 'popup.js']) {
   let ok = true;
   let err = '';
   try {
@@ -78,7 +85,7 @@ for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.
 }
 
 const popupHtml = fs.readFileSync(path.join(EXT, 'popup.html'), 'utf8');
-for (const src of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'popup.js', 'popup.css']) {
+for (const src of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'clocksync.js', 'popup.js', 'popup.css']) {
   check(`popup.html подключает ${src}`, popupHtml.includes(src));
 }
 
@@ -358,7 +365,10 @@ check('не вошли в кабинет — сказано прямо', /каб
 
 // Dry-run по-настоящему: в коде расширения не должно быть НИ ОДНОГО способа
 // отправить запрос. Это проверяется по всем файлам, а не по флагу в настройках.
-const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js'];
+// С этапа ext-4 в расширении появился ровно ОДИН сетевой запрос — замер часов, и живёт
+// он в отдельном файле clocksync.js, подключённом только к панели. На странице сайта
+// (content script и его библиотеки) способов отправки по-прежнему нет ни одного.
+const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js'];
 const senders = [];
 for (const rel of extFiles) {
   const src = fs.readFileSync(path.join(EXT, rel), 'utf8');
@@ -366,8 +376,23 @@ for (const rel of extFiles) {
     if (re.test(src)) senders.push(`${rel}: ${re}`);
   }
 }
-check('в расширении нет ни одного способа отправки (настоящий dry-run)', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
+check('на странице сайта у расширения нет ни одного способа отправки', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
 check('в манифесте нет прав на фоновые запросы', !manifest.background && !(manifest.permissions || []).includes('webRequest'));
+
+const clocksyncSrc = fs.readFileSync(path.join(EXT, 'clocksync.js'), 'utf8');
+check('сетевой файл не подключён к странице сайта', !(cs.js || []).includes('clocksync.js'));
+check('панель подключает сетевой файл', popupHtml.includes('clocksync.js'));
+check(
+  'в сетевом файле ровно один запрос и он на объявленный эталон',
+  (clocksyncSrc.match(/\bfetch\s*\(/g) || []).length === 1 && clocksyncSrc.includes("'https://cloudflare.com/cdn-cgi/trace'"),
+);
+// Главное для сайта: НИ ОДИН файл расширения к нему не обращается.
+const siteCalls = [];
+for (const rel of [...extFiles, 'clocksync.js']) {
+  const src = fs.readFileSync(path.join(EXT, rel), 'utf8');
+  if (/(fetch|open|sendBeacon)\s*\([^)]*gorod\.it-minsk\.by/.test(src)) siteCalls.push(rel);
+}
+check('эталон времени не создаёт сайту ни одного запроса', siteCalls.length === 0 && !clocksyncSrc.includes('gorod.it-minsk.by'), siteCalls.join(', ') || '0 запросов к gorod.it-minsk.by');
 
 // --- Живая страница сайта (фикстура) ----------------------------------------
 // ext/dev/fixtures/reg-fiz.html — настоящая страница подачи, снятая 07.08.2026 через
@@ -402,9 +427,108 @@ check('селектор типа места (name*="type_mest") попадает
 check('ассортимент — чекбоксы со значениями 1..6', (fixture.match(/name=["']assort_arr\[\]["']\s+value=["'](\d)["']/gi) || []).length === 6);
 check('поля персоны из сборки заявки есть на странице', ['fam', 'name', 'otc', 'n_persn', 't_contakt', 'n_mail'].every((n) => fixtureNames.includes(n)));
 
+// --- Часы: поправка (этап ext-4) --------------------------------------------
+logger.info('--- Часы компьютера и поправка ---');
+const clk = loadLib('lib/clock.js', { Math });
+
+// Формула NTP: дорога туда и обратно считается равной, поэтому время сервера сравниваем
+// с СЕРЕДИНОЙ окна запроса, а не с его началом.
+const p1 = clk.probeOffset({ t0: 1000, serverMs: 1600, t1: 1200 });
+check('одна проба считается по формуле NTP', p1.offsetMs === 500 && p1.rttMs === 200, `offset=${p1.offsetMs}, rtt=${p1.rttMs}`);
+
+// Одна проба застряла в сети на секунду и назвала дикую поправку. Медиана по половине
+// с наименьшим RTT обязана её выбросить — иначе один тормоз сети сдвинет весь выстрел.
+const merged = clk.mergeProbes([
+  { offsetMs: 120, rttMs: 30 },
+  { offsetMs: 118, rttMs: 34 },
+  { offsetMs: 700, rttMs: 1200 },
+  { offsetMs: 125, rttMs: 40 },
+  { offsetMs: 640, rttMs: 900 },
+]);
+check('выброс по медленной пробе отброшен', merged.ok && merged.offsetMs === 120, `offset=${merged.offsetMs}, взято ${merged.used} из ${merged.samples}`);
+check('за RTT берётся лучшая проба', merged.rttMs === 30, String(merged.rttMs));
+check('пустой замер не выдаёт себя за удачный', clk.mergeProbes([]).ok === false);
+
+check('мелкая поправка не применяется (это шум сети)', clk.usableOffset({ ok: true, offsetMs: 8, spreadMs: 5 }) === 0);
+check('крупная поправка применяется', clk.usableOffset({ ok: true, offsetMs: 2500, spreadMs: 20 }) === 2500);
+check('замер с большим разбросом не применяется', clk.usableOffset({ ok: true, offsetMs: 2500, spreadMs: 900 }) === 0);
+check('несостоявшийся замер не двигает выстрел', clk.usableOffset({ ok: false, offsetMs: 5000 }) === 0);
+
+check('часы точны → зелёная строка', clk.clockVerdict({ ok: true, offsetMs: 4, spreadMs: 10 }).level === 'ok');
+check(
+  'часы врут больше секунды → предупреждение',
+  clk.clockVerdict({ ok: true, offsetMs: 3200, spreadMs: 20 }).level === 'warn',
+  clk.clockVerdict({ ok: true, offsetMs: 3200, spreadMs: 20 }).text,
+);
+check('замер не удался → честно сказано, что стреляем по часам ПК', clk.clockVerdict({ ok: false }).level === 'warn');
+
+// Знак поправки — место, где легко ошибиться на два раза по величине сдвига.
+// Часы СПЕШАТ на 3 с (offset = настоящее − местное = −3000): настоящая полночь наступит
+// по местным часам на 3 с ПОЗЖЕ отметки 00:00:00.
+const T = Date.UTC(2026, 7, 10, 21, 0, 0);
+check('часы спешат → ждём дольше', clk.localTargetMs(T, -3000) === T + 3000);
+check('часы отстают → стреляем раньше', clk.localTargetMs(T, 2000) === T - 2000);
+check('поправка форматируется для человека', clk.formatOffset(-1500) === '−1.50 с' && clk.formatOffset(47) === '+47 мс', `${clk.formatOffset(-1500)} / ${clk.formatOffset(47)}`);
+
+// --- Выстрел: планировщик и залп (этап ext-4) --------------------------------
+logger.info('--- Точность выстрела и одномоментность залпа ---');
+const shot = loadLib('lib/shot.js', { Math, setTimeout, Promise });
+
+check('ложная цель — ближайшая ровная минута', shot.nextRoundMinute(Date.UTC(2026, 7, 10, 12, 34, 20)) === Date.UTC(2026, 7, 10, 12, 35, 0));
+check('до ровной минуты меньше секунды → берём следующую', shot.nextRoundMinute(Date.UTC(2026, 7, 10, 12, 34, 59, 500)) === Date.UTC(2026, 7, 10, 12, 36, 0));
+
+// Точность НЕ обещается, а меряется: заводим планировщик на 400 мс вперёд настоящими
+// таймерами и смотрим, на сколько он разошёлся с целью.
+const drills = [];
+for (let i = 0; i < 3; i += 1) {
+  const target = Date.now() + 400;
+  const report = await shot.shootAt({
+    localTargetMs: target,
+    offsetMs: 0,
+    count: 2,
+    sendOne: (idx) => ({ dryRun: true, idx }),
+  });
+  drills.push(report);
+}
+const worstDrift = Math.max(...drills.map((r) => Math.abs(r.driftMs)));
+const worstSpread = Math.max(...drills.map((r) => r.spreadMs));
+check('выстрел попадает в цель (замер, а не обещание)', worstDrift <= 5, `худшее отклонение ${worstDrift} мс из 3 прогонов`);
+check('выстрел не приходит РАНЬШЕ цели', drills.every((r) => r.driftMs >= 0), drills.map((r) => r.driftMs).join(', '));
+check('обе заявки уходят одномоментно', worstSpread <= 2 && drills.every((r) => r.parallel), `худший разъезд ${worstSpread} мс`);
+check('в залпе ровно столько отправок, сколько мест', drills.every((r) => r.count === 2 && r.results.length === 2));
+check('на этапе ext-4 залп тренировочный', drills.every((r) => r.results.every((x) => x.ok && x.result.dryRun === true)));
+
+// Поправка часов должна реально двигать момент выстрела, а не украшать панель.
+// Делаем вид, что часы отстают на 300 мс: цель в настоящем времени = now+700,
+// значит по местным часам стрелять надо в now+400.
+const trueTarget = Date.now() + 700;
+const withOffset = await shot.shootAt({
+  localTargetMs: clk.localTargetMs(trueTarget, 300),
+  offsetMs: 300,
+  count: 1,
+  sendOne: () => ({ dryRun: true }),
+});
+check(
+  'поправка часов сдвигает момент выстрела',
+  Math.abs(withOffset.atTrueMs - trueTarget) <= 5 && withOffset.at < trueTarget,
+  `по местным часам ${withOffset.at - trueTarget} мс до цели, в настоящем времени ${withOffset.atTrueMs - trueTarget} мс`,
+);
+
+// Залп не должен рассыпаться, если одна отправка упала: вторая обязана уйти.
+const oneBroken = await shot.volley(2, (i) => {
+  if (i === 0) throw new Error('сокет отвалился');
+  return { dryRun: true };
+}, {});
+check('падение одной отправки не срывает вторую', oneBroken.results.length === 2 && oneBroken.results[0].ok === false && oneBroken.results[1].ok === true);
+
+// Отчёт для человека.
+const rep = shot.volleyReport({ localTargetMs: 1000, offsetMs: 0, starts: [1003, 1004], results: [] });
+check('отчёт различает отклонение и разъезд', rep.driftMs === 3 && rep.spreadMs === 1, rep.text);
+check('вразнобой видно в тексте', /вразнобой/.test(shot.describeShot({ count: 2, driftMs: 2, spreadMs: 40, parallel: false })));
+
 // --- Итог -------------------------------------------------------------------
 if (failed) {
   logger.error(`Проверка не пройдена: ошибок ${failed}`);
   process.exit(1);
 }
-logger.info('Все проверки этапов ext-1…ext-3 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');
+logger.info('Все проверки этапов ext-1…ext-4 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');

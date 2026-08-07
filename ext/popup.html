@@ -27,6 +27,11 @@
       <div id="token" class="value">—</div>
     </div>
 
+    <div class="row">
+      <div class="label">Часы компьютера</div>
+      <div id="clock" class="value">меряю…</div>
+    </div>
+
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
     <div id="advice" class="advice"></div>
 
@@ -40,15 +45,27 @@
       </details>
     </div>
 
+    <div id="drill" class="drill">
+      <button id="drill-btn" type="button">Тренировочный залп по ровной минуте</button>
+      <div id="drill-note" class="drill-note">
+        Проверяет точность выстрела вхолостую: ничего не отправляется. Не сворачивайте
+        вкладку — Chrome тормозит таймеры в скрытых вкладках.
+      </div>
+      <div id="drill-result" class="drill-result"></div>
+    </div>
+
     <div class="foot">
       Панель пока только смотрит и готовит заявку. Отправлять её она ещё не умеет —
-      в коде расширения нет ни одного запроса к сайту.
+      на странице сайта у расширения нет ни одного запроса.
     </div>
 
     <script src="lib/minsk.js"></script>
     <script src="lib/account.js"></script>
     <script src="lib/guard.js"></script>
     <script src="lib/order.js"></script>
+    <script src="lib/clock.js"></script>
+    <script src="lib/shot.js"></script>
+    <script src="clocksync.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

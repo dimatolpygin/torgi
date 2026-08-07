@@ -121,8 +121,8 @@ function buildPlan(fields, account, booking) {
     assortIds: inputs.assortIds,
   });
   return {
-    // dryRun здесь всегда true: отправлять расширение пока не умеет вовсе — в коде нет
-    // ни одного fetch/XHR к сайту. Боевой режим появится отдельным этапом (ext-4).
+    // dryRun здесь всегда true: отправлять расширение пока не умеет вовсе — на странице
+    // сайта у него нет ни одного fetch/XHR. Боевой режим появится отдельным этапом (ext-5).
     dryRun: true,
     count: BOOKINGS_PER_ACCOUNT,
     typeMesta: inputs.typeMesta,
@@ -138,6 +138,49 @@ function buildPlan(fields, account, booking) {
     // Панели уходит предпросмотр тела с длиной токена вместо самого токена.
     preview: previewForm(payload, guardState.fieldName, guardState.token.length),
   };
+}
+
+// ——— Часы и выстрел (этап ext-4) ——————————————————————————————————————————
+//
+// Сеть на странице сайта расширению по-прежнему недоступна: замер часов делает панель
+// (clocksync.js, к сайту не ходит) и присылает сюда готовую поправку. Здесь она только
+// хранится и учитывается в момент выстрела.
+
+const clockState = {
+  sync: null, // результат замера от панели
+  offsetMs: 0, // применяемая поправка (мелкую и шумную не применяем)
+};
+
+// Последний залп: что получилось. На этом этапе залп всегда тренировочный — вместо
+// отправки подставлена заглушка, ни одного запроса к сайту не происходит.
+let lastShot = null;
+let armedFor = null; // на какой момент взведён таймер (защита от двойного завода)
+
+// Заглушка отправки. В ext-5 сюда придёт настоящий fetch с токеном; сейчас она только
+// фиксирует, что до неё дошло дело.
+function dryRunSend(index) {
+  return { dryRun: true, index, at: Date.now() };
+}
+
+function armShot(targetMs, count) {
+  const local = localTargetMs(targetMs, clockState.offsetMs);
+  if (armedFor === local) return { ok: true, already: true, localTargetMs: local };
+  if (local - Date.now() <= 0) return { ok: false, error: 'момент уже прошёл' };
+
+  armedFor = local;
+  shootAt({
+    localTargetMs: local,
+    offsetMs: clockState.offsetMs,
+    count: count || BOOKINGS_PER_ACCOUNT,
+    sendOne: dryRunSend,
+  }).then((report) => {
+    report.dryRun = true;
+    report.targetMs = targetMs;
+    lastShot = report;
+    armedFor = null;
+  });
+
+  return { ok: true, localTargetMs: local, inMs: local - Date.now() };
 }
 
 // ——— Ответ панели ————————————————————————————————————————————————————————
@@ -184,6 +227,15 @@ function readState() {
       status,
       advice,
     },
+    clock: {
+      sync: clockState.sync,
+      offsetMs: clockState.offsetMs,
+      verdict: clockVerdict(clockState.sync),
+      // В какой момент по часам ЭТОГО компьютера наступит настоящая полночь.
+      localTargetMs: localTargetMs(target.ms, clockState.offsetMs),
+    },
+    shot: lastShot,
+    armedFor,
   };
   state.readiness = readiness(state);
   return state;
@@ -193,12 +245,20 @@ function readState() {
 // запущен (значит, страница посторонняя), sendMessage просто не получит ответа —
 // панель это и покажет. Никакого фонового скрипта для этого не нужно.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === 'GET_STATE') {
-    try {
+  try {
+    if (msg && msg.type === 'GET_STATE') {
       sendResponse({ ok: true, state: readState() });
-    } catch (e) {
-      sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
+    } else if (msg && msg.type === 'SET_CLOCK') {
+      // Поправку меряет панель, применяем её здесь: мелкую и шумную отбрасываем,
+      // чтобы не двигать выстрел по случайному джиттеру сети.
+      clockState.sync = msg.sync || null;
+      clockState.offsetMs = usableOffset(msg.sync);
+      sendResponse({ ok: true, offsetMs: clockState.offsetMs });
+    } else if (msg && msg.type === 'ARM_SHOT') {
+      sendResponse({ ok: true, armed: armShot(msg.targetMs, msg.count) });
     }
+  } catch (e) {
+    sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });
   }
   return false; // ответ синхронный
 });

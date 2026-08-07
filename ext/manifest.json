@@ -3,11 +3,11 @@
   "name": "Бронь — Комаровка",
   "version": "0.1.0",
   "description": "Подаёт заявку на торговое место ровно в 00:00 по минскому времени из вашего браузера. Проверку на робота проходите вы.",
-  "host_permissions": ["https://gorod.it-minsk.by/*"],
+  "host_permissions": ["https://gorod.it-minsk.by/*", "https://cloudflare.com/cdn-cgi/trace"],
   "content_scripts": [
     {
       "matches": ["https://gorod.it-minsk.by/rinki/minsk/reg/*"],
-      "js": ["lib/minsk.js", "lib/account.js", "lib/guard.js", "lib/order.js", "content.js"],
+      "js": ["lib/minsk.js", "lib/account.js", "lib/guard.js", "lib/order.js", "lib/clock.js", "lib/shot.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

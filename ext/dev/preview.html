@@ -59,6 +59,11 @@
       <div id="token" class="value">—</div>
     </div>
 
+    <div class="row">
+      <div class="label">Часы компьютера</div>
+      <div id="clock" class="value">меряю…</div>
+    </div>
+
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
     <div id="advice" class="advice"></div>
 
@@ -72,6 +77,15 @@
       </details>
     </div>
 
+    <div id="drill" class="drill">
+      <button id="drill-btn" type="button">Тренировочный залп по ровной минуте</button>
+      <div id="drill-note" class="drill-note">
+        В предпросмотре залп настоящий по механике и пустой по сути: ждёт ровной минуты и
+        меряет точность, но вместо отправки — заглушка.
+      </div>
+      <div id="drill-result" class="drill-result"></div>
+    </div>
+
     <div class="foot">
       Панель пока только смотрит. Заявку не подаёт — это следующие этапы.
     </div>
@@ -79,11 +93,31 @@
     <script>
       // Заглушка Chrome API: выдаёт вымышленный кабинет (никаких настоящих данных).
       // Панель опрашивает её раз в секунду, поэтому смена сценария видна сразу.
+      // Замер часов в предпросмотре не делаем: настоящий clocksync.js сюда не подключён,
+      // чтобы открытие превью не лезло в сеть. Отдаём правдоподобный результат.
+      window.syncClock = async () => ({ ok: true, offsetMs: 137, rttMs: 24, spreadMs: 9, samples: 5, used: 3, source: 'Cloudflare (предпросмотр)', at: Date.now() });
+
+      // Последний тренировочный залп — механика настоящая, отправка заглушена.
+      let previewShot = null;
+
       window.chrome = {
         runtime: { lastError: null },
         tabs: {
           query: async () => [{ id: 1 }],
-          sendMessage: (_tabId, _msg, cb) => {
+          sendMessage: (_tabId, msg, cb) => {
+            if (msg && msg.type === 'SET_CLOCK') return void cb({ ok: true, offsetMs: usableOffset(msg.sync) });
+            if (msg && msg.type === 'ARM_SHOT') {
+              shootAt({
+                localTargetMs: msg.targetMs,
+                offsetMs: 0,
+                count: msg.count || 2,
+                sendOne: (i) => ({ dryRun: true, i }),
+              }).then((r) => {
+                r.dryRun = true;
+                previewShot = r;
+              });
+              return void cb({ ok: true, armed: { ok: true } });
+            }
             const scenario = document.getElementById('scenario').value;
             const now = Date.now();
             const target = nextRegistrationMidnight();
@@ -161,6 +195,9 @@
                 status,
                 advice,
               },
+              clock: { sync: null, offsetMs: 0, verdict: clockVerdict(null), localTargetMs: target.ms },
+              shot: previewShot,
+              armedFor: null,
             };
             state.readiness = readiness(state);
             cb({ ok: true, state });
@@ -172,6 +209,8 @@
     <script src="../lib/account.js"></script>
     <script src="../lib/guard.js"></script>
     <script src="../lib/order.js"></script>
+    <script src="../lib/clock.js"></script>
+    <script src="../lib/shot.js"></script>
     <script src="../popup.js"></script>
   </body>
 </html>

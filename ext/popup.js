@@ -1,8 +1,14 @@
 // Панель. Спрашивает content script активной вкладки и рисует, что тот увидел.
-// Обратный отсчёт идёт по часам ПК — на этих этапах этого достаточно; сверка часов
-// с сервером и точный выстрел — этап ext-4.
+// Здесь же (и только здесь) живёт единственный сетевой запрос расширения — замер
+// расхождения часов ПК с настоящим временем; к сайту брони он не идёт (clocksync.js).
 
 const $ = (id) => document.getElementById(id);
+
+// Поправка часов: сколько миллисекунд прибавить к Date.now(), чтобы получить настоящее
+// время. Меряется один раз при открытии панели и уходит в content script.
+let clockSync = null;
+let clockOffset = 0;
+const trueNow = () => Date.now() + clockOffset;
 
 function setStatus(kind, text) {
   const el = $('status');
@@ -17,11 +23,13 @@ let tabId = null;
 let lastState = null;
 
 function tick() {
-  if (target.ms - Date.now() <= 0) {
+  if (target.ms - trueNow() <= 0) {
     // Полночь прошла, пока панель открыта — пересчитываем цель на следующую ночь.
     target = nextRegistrationMidnight();
   }
-  $('countdown').textContent = formatCountdown(target.ms - Date.now());
+  // Отсчёт идёт по НАСТОЯЩЕМУ времени: если часы ПК сбиты, человек должен видеть правду,
+  // а не то же враньё, по которому он и так смотрит на часы в углу экрана.
+  $('countdown').textContent = formatCountdown(target.ms - trueNow());
   $('target').textContent = `подача в 00:00, ночь на ${formatDateRu(target)}`;
   renderToken(); // остаток годности токена должен таять на глазах, а не при открытии
 }
@@ -42,11 +50,42 @@ function renderToken() {
     el.classList.remove('ok');
     return;
   }
-  const st = tokenStatus({ token: 'x', seenAt: g.seenAt, issuedKnown: g.issuedKnown, targetMs: target.ms });
-  const at = formatTimeRu(g.seenAt);
+  // Токен увидел content script по часам ПК, а цель (полночь) — в настоящем времени.
+  // Приводим момент выдачи к настоящему, иначе сбитые часы исказят срок годности.
+  const st = tokenStatus({
+    token: 'x',
+    seenAt: g.seenAt + clockOffset,
+    issuedKnown: g.issuedKnown,
+    targetMs: target.ms,
+    now: trueNow(),
+  });
+  const at = formatTimeRu(g.seenAt + clockOffset);
   el.textContent = st.state === 'expired' ? `истёк (был в ${at})` : `${at}, годен ${formatLeft(st.leftMs)}`;
   el.classList.toggle('bad', st.state !== 'valid' || !st.coversTarget);
   el.classList.toggle('ok', st.state === 'valid' && st.coversTarget);
+}
+
+// Строка «Часы компьютера»: расхождение с настоящим временем и что мы с ним сделали.
+function renderClock() {
+  const el = $('clock');
+  const v = clockVerdict(clockSync);
+  const detail = clockSync && clockSync.ok ? ` (${clockSync.source}, дорога ${Math.round(clockSync.rttMs)} мс)` : '';
+  el.textContent = v.text + detail;
+  el.classList.toggle('bad', v.level !== 'ok');
+  el.classList.toggle('ok', v.level === 'ok');
+}
+
+// Итог последнего тренировочного залпа: точность и одномоментность.
+function renderShot(shot) {
+  const el = $('drill-result');
+  if (!shot) {
+    el.textContent = '';
+    return;
+  }
+  el.textContent = `${formatTimeRu(shot.atTrueMs)} — ${shot.text}`;
+  const good = Math.abs(shot.driftMs) <= 50 && shot.parallel;
+  el.classList.toggle('bad', !good);
+  el.classList.toggle('ok', good);
 }
 
 async function activeTab() {
@@ -96,6 +135,7 @@ function render(state) {
     setStatus('wait', 'Откройте в этой вкладке форму брони на gorod.it-minsk.by');
     renderToken();
     renderPlan(null);
+    renderShot(null);
     return;
   }
 
@@ -115,6 +155,7 @@ function render(state) {
   }
   renderToken();
   renderPlan(state.plan);
+  renderShot(state.shot);
 }
 
 async function refresh() {
@@ -127,13 +168,41 @@ async function refresh() {
   } else render(null);
 }
 
+// Замер часов и передача поправки на страницу. Один раз за открытие панели: чаще незачем,
+// а лишние запросы — лишний шум.
+async function measureClock() {
+  renderClock();
+  clockSync = await syncClock();
+  clockOffset = usableOffset(clockSync);
+  renderClock();
+  if (tabId != null) {
+    chrome.tabs.sendMessage(tabId, { type: 'SET_CLOCK', sync: clockSync }, () => void chrome.runtime.lastError);
+  }
+}
+
+// Тренировочный залп: та же машинерия, что уйдёт в полночь, но по ближайшей ровной
+// минуте и с заглушкой вместо отправки. Заводит его content script — он переживает
+// закрытие панели, а панель бы не пережила.
+function armDrill() {
+  if (tabId == null) return;
+  const at = nextRoundMinute(trueNow());
+  $('drill-result').textContent = `взведён на ${formatTimeRu(at)} — ждём`;
+  $('drill-result').classList.remove('bad', 'ok');
+  chrome.tabs.sendMessage(tabId, { type: 'ARM_SHOT', targetMs: at, count: 2 }, (res) => {
+    void chrome.runtime.lastError;
+    if (!res || !res.ok) $('drill-result').textContent = 'страница подачи не открыта — залп заводить негде';
+  });
+}
+
 async function main() {
   tick();
   setInterval(tick, 250);
 
   const tab = await activeTab();
   tabId = tab && tab.id != null ? tab.id : null;
+  $('drill-btn').addEventListener('click', armDrill);
   await refresh();
+  await measureClock();
   // Раз в секунду перечитываем страницу: человек проходит проверку при открытой панели
   // и должен увидеть это сразу, не закрывая и не открывая её заново.
   setInterval(refresh, 1000);
