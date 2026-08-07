@@ -1,12 +1,13 @@
-// UAT-скрипт этапов ext-1 и ext-2: каркас расширения Chrome и считывание токена проверки.
-// Офлайн: проверяет манифест, наличие и синтаксис файлов и логику библиотек
-// (минское время, распознавание кабинета, срок годности токена и подсказки человеку).
+// UAT-скрипт этапов ext-1…ext-3: каркас расширения Chrome, считывание токена проверки
+// и сборка заявки. Офлайн: манифест, синтаксис файлов, логика библиотек (минское время,
+// кабинет, годность токена) и побайтовая сверка payload create_zajav с ботом.
 // В сеть не ходит, Chrome не нужен.
 // Запуск: node src/scripts/check-ext.js
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
+import { buildCreateZajavPayload } from '../site/order.js';
 import { logger } from '../logger.js';
 
 const EXT = path.resolve('ext');
@@ -22,10 +23,10 @@ function check(name, ok, detail = '') {
 // Загрузка библиотеки расширения в изолированный контекст. Файлы намеренно написаны
 // без import/export (их подключает и content script, и popup), поэтому берём их через vm
 // и забираем мост module.exports в конце файла.
-function loadLib(rel) {
+function loadLib(rel, extraGlobals = {}) {
   const code = fs.readFileSync(path.join(EXT, rel), 'utf8');
   const mod = { exports: {} };
-  vm.runInNewContext(code, { module: mod, exports: mod.exports, Intl, Date, console });
+  vm.runInNewContext(code, { module: mod, exports: mod.exports, Intl, Date, JSON, URLSearchParams, Number, console, ...extraGlobals });
   return mod.exports;
 }
 
@@ -64,7 +65,7 @@ for (const rel of declared) {
 const extras = ['popup.js', 'popup.css', 'README.md'];
 for (const rel of extras) check(`файл на месте: ${rel}`, fs.existsSync(path.join(EXT, rel)));
 
-for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'content.js', 'popup.js']) {
+for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'content.js', 'popup.js']) {
   let ok = true;
   let err = '';
   try {
@@ -77,7 +78,7 @@ for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'content.js
 }
 
 const popupHtml = fs.readFileSync(path.join(EXT, 'popup.html'), 'utf8');
-for (const src of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'popup.js', 'popup.css']) {
+for (const src of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'popup.js', 'popup.css']) {
   check(`popup.html подключает ${src}`, popupHtml.includes(src));
 }
 
@@ -269,9 +270,105 @@ check(
   /hasToken/.test(guardBlock) && /tokenLength/.test(guardBlock) && !/\btoken:/.test(guardBlock),
 );
 
+// --- Сборка заявки: сверка с ботом (этап ext-3) -----------------------------
+logger.info('--- Заявка create_zajav: расширение против бота ---');
+const order = loadLib('lib/order.js', { formatDateRu: minsk.formatDateRu });
+
+// Поля формы — общий вход для обеих сборок. Кириллица и телефон здесь не для красоты:
+// именно на них видно, что кодирование тела совпадает байт в байт.
+const FIELDS = {
+  n_persn: '4131195',
+  fam: 'Петрусевич',
+  name: 'Мария',
+  otc: 'Ивановна',
+  t_contakt: '+375291234567',
+  n_mail: 'test@example.by',
+  type_person: 'fiz',
+  is_login: '1',
+};
+const ORDER_ARGS = { fields: FIELDS, rinokId: 10, typeMesta: 2, day: 15, month: 8, year: 2026, assortIds: [2] };
+
+const botPayload = buildCreateZajavPayload(ORDER_ARGS);
+const extPayload = order.buildCreateZajavPayload(ORDER_ARGS);
+
+check(
+  'ключи и порядок полей совпадают с ботом',
+  JSON.stringify(Object.keys(extPayload)) === JSON.stringify(Object.keys(botPayload)),
+  Object.keys(extPayload).join(','),
+);
+const botBody = new URLSearchParams(botPayload).toString();
+const extBody = order.encodeForm(extPayload);
+check('тело запроса совпадает с ботом побайтово', extBody === botBody, `${extBody.length} байт`);
+if (extBody !== botBody) {
+  for (const k of Object.keys(botPayload)) {
+    if (botPayload[k] !== extPayload[k]) logger.error(`   расхождение в ${k}: бот=${botPayload[k]} / расширение=${extPayload[k]}`);
+  }
+}
+
+// Несколько дат подряд, включая переход через границу месяца и года: на каждой
+// дате payload обеих сборок обязан совпадать.
+let mismatched = 0;
+for (const [d, m, y] of [
+  [1, 1, 2027],
+  [29, 2, 2028],
+  [31, 8, 2026],
+  [15, 8, 2026],
+  [30, 12, 2026],
+]) {
+  const args = { ...ORDER_ARGS, day: d, month: m, year: y };
+  if (order.encodeForm(order.buildCreateZajavPayload(args)) !== new URLSearchParams(buildCreateZajavPayload(args)).toString()) mismatched += 1;
+}
+check('совпадение держится на разных датах', mismatched === 0, `проверено 5 дат, расхождений ${mismatched}`);
+
+// Несколько ассортиментов: ARR_ASSORT собирается индексами, порядок важен.
+let assortMismatch = 0;
+for (const ids of [[2], [1, 2], [2, 3, 6]]) {
+  const args = { ...ORDER_ARGS, assortIds: ids };
+  if (order.encodeForm(order.buildCreateZajavPayload(args)) !== new URLSearchParams(buildCreateZajavPayload(args)).toString()) assortMismatch += 1;
+}
+check('совпадение держится на разных наборах ассортимента', assortMismatch === 0);
+
+check('константы кабинета: рынок 10, торговый ряд, овощи, 2 места', order.RINOK_ID === 10 && order.TYPE_MESTA_DEFAULT === 2 && order.ASSORT_DEFAULT[0] === 2 && order.BOOKINGS_PER_ACCOUNT === 2);
+check('адрес подачи тот же, что у бота', order.CREATE_PATH === '/rinki/minsk/create_zajav/');
+
+// Токен — единственное намеренное отличие от бота.
+const withTok = order.withToken(extPayload, 'cf-turnstile-response', 'TOKEN123');
+check('токен добавляется отдельным полем', order.encodeForm(withTok) === `${botBody}&cf-turnstile-response=TOKEN123`);
+check('без токена payload остаётся как у бота', order.encodeForm(order.withToken(extPayload, 'cf-turnstile-response', '')) === botBody);
+check('в предпросмотре вместо токена его длина', /cf-turnstile-response=<токен, 412 симв\.>$/.test(order.previewForm(extPayload, 'cf-turnstile-response', 412)));
+check('предпросмотр не содержит самого токена', !order.previewForm(order.withToken(extPayload, 'cf-turnstile-response', 'SECRET'), 'cf-turnstile-response', 6).includes('SECRET'));
+
+// Фраза человеку — то, что клиентка читает спросонья.
+const bookingSat = { day: 15, month: 8, year: 2026, weekday: 6, dateStr: '2026-08-15' };
+check(
+  'план словами: «Подам 2 заявки на 15 августа, суббота — овощи»',
+  order.describePlan({ count: 2, booking: bookingSat, assortIds: [2] }) === 'Подам 2 заявки на 15 августа, суббота — овощи',
+  order.describePlan({ count: 2, booking: bookingSat, assortIds: [2] }),
+);
+check('одна заявка склоняется правильно', /Подам 1 заявку/.test(order.describePlan({ count: 1, booking: bookingSat, assortIds: [2] })));
+
+// Помехи подаче видны заранее, а не в 00:00:00.
+const okAcc = acc.accountFromFields(FIELDS);
+check('всё готово — помех нет', order.planProblems({ account: okAcc, day: 15, hasToken: true, tokenField: 'cf-turnstile-response' }).length === 0);
+check('нет токена — сказано прямо', /проверка на робота/.test(order.planProblems({ account: okAcc, day: 15, hasToken: false, tokenField: 'cf-turnstile-response' })[0]));
+check('не вошли в кабинет — сказано прямо', /кабинет не виден/.test(order.planProblems({ account: acc.accountFromFields({}), day: 15, hasToken: true, tokenField: 'x' })[0]));
+
+// Dry-run по-настоящему: в коде расширения не должно быть НИ ОДНОГО способа
+// отправить запрос. Это проверяется по всем файлам, а не по флагу в настройках.
+const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js'];
+const senders = [];
+for (const rel of extFiles) {
+  const src = fs.readFileSync(path.join(EXT, rel), 'utf8');
+  for (const re of [/\bfetch\s*\(/, /XMLHttpRequest/, /navigator\.sendBeacon/, /\bform\.submit\s*\(/, /WebSocket/]) {
+    if (re.test(src)) senders.push(`${rel}: ${re}`);
+  }
+}
+check('в расширении нет ни одного способа отправки (настоящий dry-run)', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
+check('в манифесте нет прав на фоновые запросы', !manifest.background && !(manifest.permissions || []).includes('webRequest'));
+
 // --- Итог -------------------------------------------------------------------
 if (failed) {
   logger.error(`Проверка не пройдена: ошибок ${failed}`);
   process.exit(1);
 }
-logger.info('Все проверки этапов ext-1 и ext-2 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');
+logger.info('Все проверки этапов ext-1…ext-3 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');

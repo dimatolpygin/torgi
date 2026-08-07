@@ -65,6 +65,26 @@ function askState(id) {
   });
 }
 
+// Что уйдёт в полночь: фраза человеку, список помех и свёрнутый предпросмотр запроса.
+function renderPlan(plan) {
+  const box = $('plan');
+  if (!plan) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = '';
+  $('plan-text').textContent = plan.text;
+  $('plan-preview').textContent = plan.preview;
+
+  const list = $('plan-problems');
+  list.textContent = '';
+  for (const p of plan.problems) {
+    const li = document.createElement('li');
+    li.textContent = p;
+    list.appendChild(li);
+  }
+}
+
 function render(state) {
   lastState = state;
   const booking = state ? state.booking : bookingDateFor(target);
@@ -75,6 +95,7 @@ function render(state) {
     $('advice').textContent = '';
     setStatus('wait', 'Откройте в этой вкладке форму брони на gorod.it-minsk.by');
     renderToken();
+    renderPlan(null);
     return;
   }
 
@@ -93,6 +114,7 @@ function render(state) {
     $('advice').textContent = `Кабинет: ${acc.fio}`;
   }
   renderToken();
+  renderPlan(state.plan);
 }
 
 async function refresh() {

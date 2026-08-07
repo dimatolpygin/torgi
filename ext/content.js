@@ -86,6 +86,55 @@ setInterval(pollGuard, 300);
 // Виджет и его поле появляются не сразу — замечаем это без ожидания следующего опроса.
 new MutationObserver(pollGuard).observe(document.documentElement, { childList: true, subtree: true });
 
+// ——— Что именно подавать (этап ext-3) ————————————————————————————————————
+//
+// Тип места и ассортимент берём СО СТРАНИЦЫ, если человек их выбрал, и только иначе
+// подставляем константы кабинета. Так расширение подаёт то же, что подал бы человек
+// руками, а не то, что мы когда-то вписали в код.
+
+function readOrderInputs() {
+  const typeEl = document.querySelector('select[name*="type_mest" i], input[name*="type_mest" i]:checked');
+  const typeMesta = typeEl && typeEl.value ? Number(typeEl.value) : TYPE_MESTA_DEFAULT;
+
+  const boxes = Array.from(document.querySelectorAll('input[type="checkbox"][name*="assort" i]:checked'))
+    .map((el) => Number(el.value))
+    .filter((v) => Number.isFinite(v));
+  const assortIds = boxes.length ? boxes : ASSORT_DEFAULT;
+
+  return { typeMesta, assortIds, fromPage: { type: !!typeEl, assort: boxes.length > 0 } };
+}
+
+function buildPlan(fields, account, booking) {
+  const inputs = readOrderInputs();
+  const payload = buildCreateZajavPayload({
+    fields,
+    rinokId: RINOK_ID,
+    typeMesta: inputs.typeMesta,
+    day: booking.day,
+    month: booking.month,
+    year: booking.year,
+    assortIds: inputs.assortIds,
+  });
+  return {
+    // dryRun здесь всегда true: отправлять расширение пока не умеет вовсе — в коде нет
+    // ни одного fetch/XHR к сайту. Боевой режим появится отдельным этапом (ext-4).
+    dryRun: true,
+    count: BOOKINGS_PER_ACCOUNT,
+    typeMesta: inputs.typeMesta,
+    assortIds: inputs.assortIds,
+    fromPage: inputs.fromPage,
+    text: describePlan({ count: BOOKINGS_PER_ACCOUNT, booking, assortIds: inputs.assortIds }),
+    problems: planProblems({
+      account,
+      day: booking.day,
+      hasToken: !!guardState.token,
+      tokenField: guardState.fieldName || (guardState.kind ? TOKEN_FIELD_NAMES[0] : null),
+    }),
+    // Панели уходит предпросмотр тела с длиной токена вместо самого токена.
+    preview: previewForm(payload, guardState.fieldName, guardState.token.length),
+  };
+}
+
 // ——— Ответ панели ————————————————————————————————————————————————————————
 
 function readState() {
@@ -114,6 +163,7 @@ function readState() {
     account,
     target,
     booking,
+    plan: buildPlan(fields, account, booking),
     url: location.href,
     readAt: Date.now(),
     guard: {

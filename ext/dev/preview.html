@@ -62,6 +62,16 @@
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
     <div id="advice" class="advice"></div>
 
+    <div id="plan" class="plan">
+      <div class="mode">Режим: тренировка — ничего не отправляется</div>
+      <div id="plan-text" class="plan-text">—</div>
+      <ul id="plan-problems" class="problems"></ul>
+      <details>
+        <summary>Показать, что уйдёт в 00:00</summary>
+        <pre id="plan-preview" class="preview"></pre>
+      </details>
+    </div>
+
     <div class="foot">
       Панель пока только смотрит. Заявку не подаёт — это следующие этапы.
     </div>
@@ -87,6 +97,7 @@
               is_login: scenario === 'guest' ? '0' : '1',
             });
 
+
             const seenAt = { fresh: now - 60 * 1000, expiring: now - 4.5 * 60 * 1000, expired: now - 6 * 60 * 1000 }[scenario];
             const token = seenAt == null ? '' : 'demo-token';
             const status = tokenStatus({ token, seenAt, issuedKnown: true, targetMs: target.ms });
@@ -98,11 +109,46 @@
               pageAgeMs: 60 * 1000,
             });
 
+            const booking = bookingDateFor(target);
+            const fields = {
+              n_persn: '4131195',
+              fam: 'Иванова',
+              name: 'Мария',
+              otc: 'Петровна',
+              t_contakt: '+375291234567',
+              n_mail: 'ivanova@example.by',
+              type_person: 'fiz',
+              is_login: '1',
+            };
+            const payload = buildCreateZajavPayload({
+              fields,
+              rinokId: RINOK_ID,
+              typeMesta: TYPE_MESTA_DEFAULT,
+              day: booking.day,
+              month: booking.month,
+              year: booking.year,
+              assortIds: ASSORT_DEFAULT,
+            });
+
             const state = {
               onSubmitPage: true,
               account,
               target,
-              booking: bookingDateFor(target),
+              booking,
+              plan: {
+                dryRun: true,
+                count: BOOKINGS_PER_ACCOUNT,
+                typeMesta: TYPE_MESTA_DEFAULT,
+                assortIds: ASSORT_DEFAULT,
+                text: describePlan({ count: BOOKINGS_PER_ACCOUNT, booking, assortIds: ASSORT_DEFAULT }),
+                problems: planProblems({
+                  account,
+                  day: booking.day,
+                  hasToken: !!token,
+                  tokenField: 'cf-turnstile-response',
+                }),
+                preview: previewForm(payload, 'cf-turnstile-response', token ? 412 : 0),
+              },
               guard: {
                 kind: 'turnstile',
                 widgetSeen: true,
@@ -125,6 +171,7 @@
     <script src="../lib/minsk.js"></script>
     <script src="../lib/account.js"></script>
     <script src="../lib/guard.js"></script>
+    <script src="../lib/order.js"></script>
     <script src="../popup.js"></script>
   </body>
 </html>

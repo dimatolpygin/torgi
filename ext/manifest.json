@@ -7,7 +7,7 @@
   "content_scripts": [
     {
       "matches": ["https://gorod.it-minsk.by/rinki/minsk/reg/*"],
-      "js": ["lib/minsk.js", "lib/account.js", "lib/guard.js", "content.js"],
+      "js": ["lib/minsk.js", "lib/account.js", "lib/guard.js", "lib/order.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

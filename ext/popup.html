@@ -30,13 +30,25 @@
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
     <div id="advice" class="advice"></div>
 
+    <div id="plan" class="plan">
+      <div class="mode">Режим: тренировка — ничего не отправляется</div>
+      <div id="plan-text" class="plan-text">—</div>
+      <ul id="plan-problems" class="problems"></ul>
+      <details>
+        <summary>Показать, что уйдёт в 00:00</summary>
+        <pre id="plan-preview" class="preview"></pre>
+      </details>
+    </div>
+
     <div class="foot">
-      Панель пока только смотрит. Заявку не подаёт — это следующие этапы.
+      Панель пока только смотрит и готовит заявку. Отправлять её она ещё не умеет —
+      в коде расширения нет ни одного запроса к сайту.
     </div>
 
     <script src="lib/minsk.js"></script>
     <script src="lib/account.js"></script>
     <script src="lib/guard.js"></script>
+    <script src="lib/order.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>
