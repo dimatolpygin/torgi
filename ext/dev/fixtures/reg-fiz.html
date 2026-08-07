@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+
+	<title>Регистрация — Gorod.gov.by</title>
+	<link rel="icon" href="/images/favicon.ico" type="image/x-icon">
+	<!--<link type="text/css" rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.4.0/css/font-awesome.min.css">-->
+	<!--<link type="text/css" rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:400,700italic,600italic,600,400italic,700&subset=latin,cyrillic">-->
+	<link type="text/css" rel="stylesheet" href="/css/normalize.css">
+	<link type="text/css" rel="stylesheet" href="/css/bootstrap.min.css">
+	<link type="text/css" rel="stylesheet" href="/css/bootstrap-theme.min.css">
+	<link type="text/css" rel="stylesheet" href="/css/template.css?20220324">
+	<link type="text/css" rel="stylesheet" href="/css/slider/jquery.bxslider.css?1464186772">
+	<link type="text/css" rel="stylesheet" href="/css/rinki/rinki.css?1703055830">
+	<meta name="robots" content="index,follow">
+	<meta name="description" content="Сервис онлайн-бронирования торговых мест. Информация о наличии свободных торговых площадок и машино-мест на всех рынках Минска.">	<meta name="keywords" content="рынок, рынки, Минск, ГУПР, бронирование, торговля">	
+	<!--[if lt IE 9]>
+	  <style>.left, .all-content-columnleft {width: 65%!important;}</style>
+	  <script type="text/javascript" src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
+	  <script type="text/javascript" src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+	<![endif]-->
+
+	<script type="text/javascript" src="/js/jquery-1.12.4.min.js"></script>
+	<script type="text/javascript" src="/js/jquery.cookie.js"></script>
+	<script type="text/javascript" src="/js/bootstrap.min.js"></script>
+	<script type="text/javascript" src="/js/local.js?20211115"></script>
+	<script type="text/javascript" src="/js/slider/jquery.bxslider.min.js?1396642478"></script>
+	<script type="text/javascript" src="/js/jquery.inputmask/inputmask.js?1432176912"></script>
+	<script type="text/javascript" src="/js/jquery.inputmask/jquery.inputmask.js?1432176912"></script>
+	<script type="text/javascript" src="/js/rinki/rinki.reg.js?1785842049"></script>
+	<script type="text/javascript" src="/js/rinki/cookies.js?1785920513"></script>
+	<script type="text/javascript" src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+
+</head>
+<body>
+<header>
+	<div class="header clearfix">
+		<div class="logo">
+			<a href="/" class="logo-fullimg hide-on-768"></a>
+			<a href="/" class="logo-minimg hidden show-on-768"></a>
+		</div>
+		<a href="#" class="btn-login-input js-popup-open hidden btn btn-primary enter-button" rel="auth-popup">Войти</a>
+		<div class="user-vision">
+			<img src="/images/glass-icon.png" width="30px" id="low-vision" class="h-fade" title="Перейти на версию для слабовидящих" title-back="Перейти на обычную версию сайта" alt="Перейти на версию для слабовидящих">
+			<span class="active">РУС</span>
+			<span id="be-lang" title="Переключиться на белорусскую версию">БЕЛ</span>
+			<div id="gerb-minsk">
+				<img src="/images/gerb_minsk.png">
+			</div>
+		</div>
+
+		<div class="login-form js-popup"  data-id="auth-popup" >
+				<div class="login-form-title">Авторизация<i class="fa fa-remove js-popup-close"></i></div>
+		<form method="POST" action="/rinki/minsk/login/">
+		<div class="login-block  clearfix">
+			<div class="login-panel-label">Логин</div>
+			<div class="login-panel-input"><input type="text"  name="n_login" class="all-form-input" required></div>
+		</div>
+		<div class="login-block  clearfix">
+			<div class="login-panel-label">Пароль</div>
+			<div class="login-panel-input"><input type="password"  name="n_pass" class="all-form-input" required></div>
+			<div class="login-panel-label hidden show-on-768">&nbsp;</div>
+			<div class="login-panel-input hidden show-on-768">
+				<input type="submit" value="Войти" class="btn btn-primary">
+			</div>
+		</div>
+		<div class="login-block  clearfix">
+			<!--Забыли логин?
+			&nbsp;
+			Забыли пароль?<br>-->
+		</div>
+		<div class="auth-button hide-on-768">
+			<input type="submit" type="button" value="Войти"  class="btn ft-elem">
+					</div>
+		</form>
+				</div>
+		
+		        <div class="contacts clearfix">
+							<div class='contacts-block mail'>Вопросы работоспособости сервиса<br><a href='mailto:admin@minsk.gov.by'>admin@minsk.gov.by</a></div>					</div>
+			</div>
+</header>
+<div class="main-menu-wrapper" style="border-top: 5px solid;">
+<button aria-expanded="false" aria-controls="bs-navbar" data-target="#bs-navbar" data-toggle="collapse" type="button" class="navbar-toggle collapsed"> 
+      <i class="fa fa-navicon"></i>
+      </button>
+<nav class="main-menu navbar-collapse collapse" id="bs-navbar" aria-expanded="false">
+<ul>
+	</ul>
+</nav>
+</div>
+<section class="all-content clearfix">
+<input type="hidden" id="f_sogl99_3" value="1">
+<div id="ModalSogl" class="modal fade" role="dialog" data-backdrop="static" data-keyboard="false">
+<div class="modal-dialog">
+
+    <!-- Modal content-->
+    <div class="modal-content">      
+	<form method="POST" action="/rinki/minsk/accountsogl/">
+      <div class="modal-body">
+        Я согласен на обработку персональных данных.<br><br>
+		<div class="row">
+		<div class="col-md-6"><button type="submit" name="f_sogl" value="1" class="btn btn-default btn-block">Согласен</button></div>
+		<div class="col-md-6"><a href="/account/logout/" class="btn btn-default  btn-block">Выйти</a></div>
+		 </div>
+      </div>  
+</form>	  
+    </div>
+
+  </div>
+</div>
+
+<div class="slider">
+  <ul class="bxslider">
+    <li><img img="/images/rinki/slide1.jpg" /></li>
+    <li><img img="/images/rinki/slide2.jpg" /></li>
+    <li><img img="/images/rinki/slide3.jpg" /></li>
+  </ul>
+</div>
+<!--<div class="test-messages">
+	<div>
+		Сервис работает в тестовом режиме. Ваши предложения по улучшению сервиса присылайте на почтовые ящики: guprorg@mail.ru, admin@minsk.gov.by.
+	</div>
+</div>-->
+<p><a href="/rinki/minsk/">&larr; Вернуться на Главную страницу</a></p>
+<div class="all-content-columnleft">
+    <div class="js-disposition-inner"></div>
+    <!--<h3 class="blue-color" align="center">Государственное учреждение 	«Главное управление потребительского рынка Мингорисполкома»</h3>-->
+	<h4 align="center">Бронирование свободных торговых мест в торговых рядах и машино-мест для сезонной торговли отечественной плодоовощной продукцией на рынках г.Минска</h4>
+	
+	<div class="rezerv-mest-usl" >
+	Бронирование осуществляется с завтрашнего дня и не более чем на неделю.
+	<div id="limit-rezerv-day" >Можно забронировать не более <span id="limit-rezerv-day-cnt"></span> мест на один день.</div>
+	</div>
+
+
+	
+	<form id="form_reg" method="POST">
+	<input type="hidden" name="reg" value="1">
+	<input type="hidden" id="arr_date" name="arr_date">
+	<input type="hidden" id="type_person" name="type_person" value="fiz">
+      <!--<div id="data_reg" class="register-form-left">&nbsp;</div>-->
+    	 
+	<div class="register-form-center-right">		
+        <div class="register-form-center-right-top">		
+        	<div class="register-form-center-right-top-left">
+											<div class="register-form-block form-group with-padding with-errors">
+                  <input type="text" placeholder="Фамилия" data-error="Вводится на русском либо беларусском языке" name="fam" class="form-control all-form-input" required pattern="[^0-9a-hj-zAH-JZ]{2,}">
+                  <div class="help-block error with-errors"></div>
+                </div>
+                <div class="register-form-block form-group with-padding with-errors">
+                  <input type="text" placeholder="Имя" data-error="Вводится на русском либо беларусском языке" name="name" class="form-control all-form-input" required pattern="[^0-9a-hj-zAH-JZ]{2,}">
+                  <div class="help-block error with-errors"></div>
+                </div>
+                <div class="register-form-block form-group with-padding with-errors">
+                  <input type="text" placeholder="Отчество" data-error="Вводится на русском либо беларусском языке" name="otc" class="form-control all-form-input" required pattern="[^0-9a-hj-zAH-JZ]{2,}">
+                  <div class="help-block error with-errors"></div>
+                </div>
+                <div class="register-form-block form-group with-padding with-errors">
+                  <input type="text" placeholder="Идентификационный номер в паспорте" id="n_persn" name="n_persn" class="form-control all-form-input" required autocomplete="off">
+                  <div class="help-block error with-errors"></div>
+                </div>
+								
+				<div class="register-form-block form-group with-padding with-errors">
+				  <label for="rinok" class="blue-color"><b>Выберите рынок:</b></label>
+				  					<select id="rinok" name="rinok" class="default" onchange="loadTypeMest(this)">
+												<option value="1">Универсальный рынок «Тутэйшы»</option>
+												<option value="2">«Чижовский рынок»</option>
+												<option value="3">«Червенский рынок в Лошице»</option>
+												<option value="4">«Свелта»</option>
+												<option value="5">«Серебрянка»</option>
+												<option value="6">«Велозаводской»</option>
+												<option value="7">«Московский»</option>
+												<option value="8">«Малиновка»</option>
+												<option value="10">«Минский Комаровский рынок»</option>
+												<option value="11">«Восток»</option>
+												<option value="12">«Уручье-3»</option>
+												<option value="15">«Раковский кирмаш»</option>
+												<option value="16">«Курасовщинский рынок»</option>
+												<option value="17">«Уральский»</option>
+												<option value="19">«Ждановичи», продовольственный рынок по торговле плодовоовощной продукцией (Лебяжий)</option>
+												<option value="20">«Западный»</option>
+												<option value="21">«Ждановичи», торговая зона плодовоовощной продукции (навесы на открытой площадке продовольственного центра)</option>
+											</select>
+				                  </div> 
+				
+				<div class="register-form-block form-group with-padding with-errors">
+				  
+				  <label for="type_mesta" class="blue-color"><b>Выберите тип торгового места:</b></label>
+				 
+				  <div>
+					<select id="type_mesta" name="type_mesta" class="default" onchange="fillCalendar()">
+					</select>
+				  </div>
+				 
+				  <label class="blue-color"><br><b>Выберите даты торговли:</b></label>
+				  <div id="data_reg">&nbsp;</div>
+				</div>
+
+				<label class="blue-color"><br><b>Проверка на робота:</b></label>
+				<div class="cf-turnstile" data-sitekey="0x4AAAAAAEFKBE3GIyNp4fk-" data-action="subscribe"></div>
+				  
+            </div><!--register-form-center-right-top-left-->
+			
+        	<div class="register-form-center-right-top-right">
+            			   				<center><label class="blue-color"><b>Телефон</b></label></center>
+				<div class="register-form-block">
+				  <label>
+					<input type="radio" name="t_phone" id="radio-mobile" checked value="M" />
+					Мобильный</label>
+				  <label>
+					<input type="radio" name="t_phone" id="radio-nomobile" value="C" />
+					Городской</label>
+				</div>
+				<div class="register-form-block form-group with-padding with-errors">
+				  <input type="tel" placeholder="Контактный телефон" data-error="Введите телефон в указанном формате" id="t_contakt" name="t_contakt" class="form-control all-form-input" required pattern="^([0-9\(\)\/\+ \-]{6,})$">
+				  <div class="help-block error with-errors"></div>
+				</div>
+				<div class="register-form-block form-group with-padding with-errors">
+				  <input type="email" placeholder="E-mail для подтверждения" data-error="Введите E-mail в корректном формате" name="n_mail" class="form-control all-form-input" required pattern="^[a-zA-Z0-9_.+]+@[a-zA-Z0-9]+\.[a-zA-Z0-9.]+$">
+				  <div class="help-block error with-errors"></div>
+				</div>
+				<div class="register-form-block form-group with-padding with-errors">
+                  <input type="password" placeholder="Пароль" data-error="Вы не ввели пароль" id="inputPassword" name="pass" class="form-control all-form-input" required autocomplete="off">
+                  <div class="help-block error with-errors"></div>
+                </div>
+
+				<div class="register-form-block form-group with-padding with-errors">
+                  <input type="password" placeholder="Подтверждение пароля" name="pass_sub" class="form-control all-form-input" data-match="#inputPassword" data-error="Повторите пароль" data-match-error="Пароль и пароль для подтверждения не совпадают" required autocomplete="off">
+				  <div class="help-block error with-errors"></div>
+                </div>
+				
+				<div class="register-form-block form-group with-padding with-errors">
+                  <input type="checkbox" id="f_sogl_99_3" name="f_sogl_99_3" required >	
+				  <label for="f_sogl_99_3" >Я согласен на обработку персональных данных.</label>
+				  <div class="help-block error with-errors"></div>
+                </div>
+				<br><br>
+				
+									<center><label class="blue-color"><b>Ассортимент</b></label></center>
+				<div class="register-form-block form-group with-padding with-errors block_assort">
+										<input type="checkbox" name="assort_arr[]" value="1"> Картофель<br>
+										<input type="checkbox" name="assort_arr[]" value="2"> Овощи<br>
+										<input type="checkbox" name="assort_arr[]" value="3"> Зелень<br>
+										<input type="checkbox" name="assort_arr[]" value="4"> Плоды<br>
+										<input type="checkbox" name="assort_arr[]" value="5"> Ягоды<br>
+										<input type="checkbox" name="assort_arr[]" value="6"> Яблоки<br>
+									</div> 
+				                  <!-- <textarea type="text" placeholder="При необходимости указать наименование других видов реализуемой продукции" rows="10" name="assort" class="form-control all-form-input" required></textarea>-->
+                
+				
+				
+       		 </div><!--register-form-center-right-top-right-->
+             <div class="clearfix"></div>
+        </div><!--register-form-center-right-top-->
+               </div><!--register-form-center-right--> 
+        
+      <div class="clearfix"></div>
+	<!--  <div class="register-form-left">&nbsp;
+	  
+		 
+	  </div> -->
+	  <div class="register-form-right" align="center">
+		  
+		
+		<input type="button" value="Отправить заявку" id="form-reg-submit" class="btn btn-primary index-button rinki-submit" >
+	  </div>
+	</form>
+
+<div class="modal fade" id="modal-account" tabindex="-1" role="dialog">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+        <h4 class="modal-title">Личный кабинет</h4>
+      </div>
+      <div class="modal-body">
+		<p id="info-reg"></p>
+      </div>
+      <div class="modal-footer">
+	    <input type="button" value="Печать" class="btn btn-primary index-button print">
+        <a href="/rinki/minsk/" class="btn btn-primary index-button">Вернуться на главную</a>
+        <a href="/rinki/minsk/account/" class="btn btn-primary index-button">Перейти в кабинет</a>
+      </div>
+    </div><!-- /.modal-content -->
+  </div><!-- /.modal-dialog -->
+</div>
+	
+    <!--</div>-->
+	
+</div>
+<div class="all-content-columnright js-right">
+
+	
+	<div class="module">
+	 <h3>Для сведения:</h3>
+		<div class="module-content" id="weather-mess">
+		<p align="justify" style="text-indent:1em">Реализация свежих овощей и фруктов <b>не осуществляется в холодный период года</b> (при температуре наружного воздуха 0°C и ниже) на открытых торговых местах на рынках <i>(согласно пункту 107 Санитарных норм и правил «Требования к осуществлению торговли на рынках продовольственным сырьем и пищевыми продуктами»)</i>.</p>
+		</div>
+	</div>
+	
+	<div id="weather" class="module">
+	  <h3>Погода в Минске:</h3>
+	  <div class="module-content">
+		  <div id="a1d754fd7cc3e24a71500084dacdbb15" class="ww-informers-box-854753"><p class="ww-informers-box-854754"><a href="https://world-weather.ru/pogoda/belarus/minsk/14days/">Подробнее о погоде в Минске на 2 недели</a><br><a href="https://world-weather.ru/pogoda/russia/rostov_na_donu/">Подробнее о прогнозе</a></p></div><script async type="text/javascript" charset="utf-8" src="https://world-weather.ru/wwinformer.php?userid=a1d754fd7cc3e24a71500084dacdbb15"></script><style>.ww-informers-box-854754{-webkit-animation-name:ww-informers54;animation-name:ww-informers54;-webkit-animation-duration:1.5s;animation-duration:1.5s;white-space:nowrap;overflow:hidden;-o-text-overflow:ellipsis;text-overflow:ellipsis;font-size:12px;font-family:Arial;line-height:18px;text-align:center}@-webkit-keyframes ww-informers54{0%,80%{opacity:0}100%{opacity:1}}@keyframes ww-informers54{0%,80%{opacity:0}100%{opacity:1}}</style>
+	</div>
+	</div>
+
+	
+	
+</div></section>
+<footer>
+<div class="footer-above-wrapper">
+	<div class="footer-above clearfix">
+					<noindex>
+		<a href="http://www.president.gov.by/" target="_blank"><img src="/images/banners/presidentgovby.png" title="Официальный интернет-портал Президента Республики Беларусь" rel="nofollow"></a>
+		</noindex>
+							<noindex>
+		<a href="http://minsk.gov.by" target="_blank"><img src="/images/banners/minskgovby.jpg" title="Официальный портал Минского городского исполнительного комитета" rel="nofollow"></a>
+		</noindex>
+							<noindex>
+		<a href="http://guprminsk.by/" target="_blank"><img src="/images/banners/gupr.jpg" title="Государственное учреждение &quot;Главное управление потребительского рынка Мингорисполкома&quot;" rel="nofollow"></a>
+		</noindex>
+				</div>
+</div>
+<div class="footer dark-blue">
+<a class="cookie-description-link display-inline" href="/rinki/minsk/cookies_policy/">Использование cookies</a>
+<div class="footer-wrap">
+		© <a target="_blank" href="http://it-minsk.by/">КУП "Центр информационных технологий Мингорисполкома"</a>, 2019 - 2026</div>
+</div>
+
+
+<div class="cookie-consent-banner" id="cookieNotice">
+  <div class="cookie-consent-banner__inner">
+    <div class="cookie-consent-banner__copy">
+     
+      <div class="cookie-consent-banner__description">
+    
+        Для обеспечения удобства пользователей сайта используются cookies
+        
+      </div>
+      
+    </div>
+    <div class="cookie-consent-banner__actions">
+      
+      <a href="#" class="cookie-consent-banner__cta">
+        Принять
+      </a>
+      <span class="place-between"></span>
+      <a href="#" class="cookie-consent-banner-decline__cta">
+        Отклонить
+      </a>
+	  
+    </div>
+     
+  </div>
+</div>
+
+</footer>
+</div>
+</body>
+</html>

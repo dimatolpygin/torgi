@@ -35,14 +35,25 @@ function shortFio(account) {
   return [account.fam, ...initials].filter(Boolean).join(' ') || account.fio;
 }
 
-// Страница подачи заявки (а не любая другая страница ЛК). Проверяем и адрес, и наличие
-// формы, которая шлёт на create_zajav — по одному адресу судить нельзя: разделы ЛК
-// живут на соседних путях.
-function isSubmitPage(url, formActions) {
-  const path = String(url || '');
-  const onPath = /^https:\/\/gorod\.it-minsk\.by\/rinki\/minsk\/reg\//.test(path);
-  const hasForm = (formActions || []).some((a) => /create_zajav/.test(String(a || '')));
-  return onPath && hasForm;
+// Страница подачи заявки (а не любая другая страница ЛК). Судить по одному адресу нельзя:
+// разделы ЛК живут на соседних путях.
+//
+// ВАЖНО (выяснено 07.08.2026 на живой странице): форма подачи — это
+// `<form id="form_reg" method="POST">` БЕЗ атрибута action. Адрес `create_zajav` в HTML
+// вообще не встречается, его подставляет скрипт сайта `/js/rinki/rinki.reg.js`. Поэтому
+// распознаём страницу по её собственным полям — они уникальны для формы брони.
+var SUBMIT_FORM_ID = 'form_reg';
+var SUBMIT_FIELD_MARKERS = ['arr_date', 'type_mesta', 'assort_arr[]'];
+
+function isSubmitPage(url, page) {
+  const onPath = /^https:\/\/gorod\.it-minsk\.by\/rinki\/minsk\/reg\//.test(String(url || ''));
+  if (!onPath) return false;
+  const p = page || {};
+  if ((p.formIds || []).includes(SUBMIT_FORM_ID)) return true;
+  const names = p.inputNames || [];
+  // Запасной путь на случай, если id формы когда-нибудь переименуют: три поля брони
+  // вместе на одной странице больше нигде не встречаются.
+  return SUBMIT_FIELD_MARKERS.every((n) => names.includes(n));
 }
 
 // Готовность к ночи одной строкой: что мешает подать. Порядок важен — сначала то,
@@ -55,5 +66,5 @@ function readiness(state) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { accountFromFields, shortFio, isSubmitPage, readiness };
+  module.exports = { accountFromFields, shortFio, isSubmitPage, readiness, SUBMIT_FORM_ID, SUBMIT_FIELD_MARKERS };
 }

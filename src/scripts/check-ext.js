@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
-import { buildCreateZajavPayload } from '../site/order.js';
+import { buildCreateZajavPayload, parseGuard } from '../site/order.js';
 import { logger } from '../logger.js';
 
 const EXT = path.resolve('ext');
@@ -162,17 +162,20 @@ const a3 = acc.accountFromFields({ fam: 'Иванова', name: 'Мария', is
 check('гость не выдаётся за кабинет', a3.loggedIn === false);
 check('пустой объект не роняет разбор', acc.accountFromFields({}).fio === '' && acc.accountFromFields().loggedIn === false);
 
+const SUBMIT_MARKS = { formIds: ['form_reg'], inputNames: ['arr_date', 'type_mesta', 'assort_arr[]'] };
+check('страница подачи опознана по форме form_reg', acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/reg/fiz/', SUBMIT_MARKS) === true);
 check(
-  'страница подачи опознана по адресу и форме',
-  acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/reg/fiz/', ['/rinki/minsk/create_zajav/']) === true,
+  'страница опознаётся и без id формы — по её полям',
+  acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/reg/fiz/', { formIds: ['other'], inputNames: SUBMIT_MARKS.inputNames }) === true,
 );
 check(
-  'соседняя страница ЛК без формы не считается подачей',
-  acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/account/', ['/rinki/minsk/logout/']) === false,
+  'соседняя страница ЛК не считается подачей',
+  acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/account/', { formIds: ['form_reg'], inputNames: [] }) === false,
 );
+check('посторонний сайт не считается подачей', acc.isSubmitPage('https://example.com/rinki/minsk/reg/fiz/', SUBMIT_MARKS) === false);
 check(
-  'посторонний сайт не считается подачей',
-  acc.isSubmitPage('https://example.com/rinki/minsk/reg/fiz/', ['/rinki/minsk/create_zajav/']) === false,
+  'страница ЛК с формой логина не считается подачей',
+  acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/reg/fiz/', { formIds: ['login'], inputNames: ['n_login', 'n_pass'] }) === false,
 );
 
 check('готовность: всё хорошо', acc.readiness({ onSubmitPage: true, account: a1 }).ok === true);
@@ -365,6 +368,39 @@ for (const rel of extFiles) {
 }
 check('в расширении нет ни одного способа отправки (настоящий dry-run)', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
 check('в манифесте нет прав на фоновые запросы', !manifest.background && !(manifest.permissions || []).includes('webRequest'));
+
+// --- Живая страница сайта (фикстура) ----------------------------------------
+// ext/dev/fixtures/reg-fiz.html — настоящая страница подачи, снятая 07.08.2026 через
+// минский прокси (снаружи Беларуси сайт не отвечает вовсе). На ней проверяем то, о чём
+// раньше приходилось догадываться: как называются поля и чем закрыта форма.
+logger.info('--- Живая страница сайта (фикстура 07.08.2026) ---');
+const fixture = fs.readFileSync(path.join(EXT, 'dev', 'fixtures', 'reg-fiz.html'), 'utf8');
+
+const fixtureGuard = parseGuard(fixture);
+check('на живой странице стоит Turnstile', fixtureGuard.kind === 'turnstile' && fixtureGuard.widget && fixtureGuard.script);
+check('sitekey формы прочитан', fixtureGuard.sitekey === '0x4AAAAAAEFKBE3GIyNp4fk-', fixtureGuard.sitekey);
+check(
+  'поле токена в HTML отсутствует — его создаёт виджет в браузере',
+  fixtureGuard.tokenField === null && fixtureGuard.tokenFieldExpected === 'cf-turnstile-response',
+);
+
+// Приметы страницы, по которым content script её узнаёт.
+const fixtureIds = [...fixture.matchAll(/<form\b[^>]*\bid=["']([^"']+)["']/gi)].map((m) => m[1]);
+const fixtureNames = [...fixture.matchAll(/<(?:input|select)\b[^>]*\bname=["']([^"']+)["']/gi)].map((m) => m[1]);
+check('форма подачи на живой странице — form_reg', fixtureIds.includes('form_reg'), fixtureIds.join(', '));
+check(
+  'у формы подачи НЕТ action (адрес подставляет скрипт сайта)',
+  !/<form\b[^>]*id=["']form_reg["'][^>]*\baction=/i.test(fixture) && !fixture.includes('create_zajav'),
+);
+check('живая страница опознаётся как страница подачи', acc.isSubmitPage('https://gorod.it-minsk.by/rinki/minsk/reg/fiz/', { formIds: fixtureIds, inputNames: fixtureNames }) === true);
+
+// Селекторы content script должны попадать в РЕАЛЬНЫЕ имена полей, а не в выдуманные.
+check('ассортимент на странице называется assort_arr[]', fixtureNames.includes('assort_arr[]'));
+check('селектор ассортимента (name*="assort") попадает в это имя', fixtureNames.some((n) => /assort/i.test(n)));
+check('тип места на странице — select name="type_mesta"', /<select\b[^>]*name=["']type_mesta["']/i.test(fixture));
+check('селектор типа места (name*="type_mest") попадает в это имя', fixtureNames.some((n) => /type_mest/i.test(n)));
+check('ассортимент — чекбоксы со значениями 1..6', (fixture.match(/name=["']assort_arr\[\]["']\s+value=["'](\d)["']/gi) || []).length === 6);
+check('поля персоны из сборки заявки есть на странице', ['fam', 'name', 'otc', 'n_persn', 't_contakt', 'n_mail'].every((n) => fixtureNames.includes(n)));
 
 // --- Итог -------------------------------------------------------------------
 if (failed) {

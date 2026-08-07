@@ -15,8 +15,13 @@ function collectFields() {
   return fields;
 }
 
-function collectFormActions() {
-  return Array.from(document.querySelectorAll('form')).map((f) => f.getAttribute('action') || '');
+// Приметы страницы подачи. По action судить нельзя — у формы брони его нет вовсе
+// (адрес подставляет скрипт сайта), поэтому смотрим id формы и имена её полей.
+function collectPageMarks() {
+  return {
+    formIds: Array.from(document.querySelectorAll('form')).map((f) => f.id || ''),
+    inputNames: Array.from(document.querySelectorAll('input[name], select[name]')).map((el) => el.name),
+  };
 }
 
 // ——— Наблюдение за проверкой на робота (этап ext-2) ————————————————————————
@@ -140,7 +145,7 @@ function buildPlan(fields, account, booking) {
 function readState() {
   const fields = collectFields();
   const account = accountFromFields(fields);
-  const onSubmitPage = isSubmitPage(location.href, collectFormActions());
+  const onSubmitPage = isSubmitPage(location.href, collectPageMarks());
   const target = nextRegistrationMidnight();
   const booking = bookingDateFor(target);
 
