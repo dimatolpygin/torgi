@@ -76,7 +76,7 @@ for (const r of rows) {
     alarms.push(`этап ${r.n}: в таблице «${r.mark}», тег ${r.closed ? 'есть' : 'ОТСУТСТВУЕТ'} — STATUS врёт, чинить первым делом`);
   }
   if (r.mark === '🚧' && !r.auto && r.days !== null && r.days >= 1) {
-    alarms.push(`этап ${r.n}: «в работе» ${r.days} дн. без тега ext-${r.n}-auto — сессия оборвалась, запусти auto.bat`);
+    alarms.push(`этап ${r.n}: «в работе» ${r.days} дн. без тега ext-${r.n}-auto — сессия оборвалась, доделать этап`);
   }
   if (r.auto && !r.hasUat) {
     alarms.push(`этап ${r.n}: автопроверки прошли, но блока в CHECKLIST.md нет — тебе нечего проверить`);
@@ -102,10 +102,10 @@ const blockedBy = rows.find((r) => !r.closed && !r.auto && r.gate === 'СТОП'
 console.log('');
 console.log('  ▶ ТВОЙ СЛЕДУЮЩИЙ ШАГ:');
 if (nextAuto) {
-  console.log(`     Запустить auto.bat — пойдёт с ext-${nextAuto.n} и дальше, пока не упрётся в тебя`);
+  console.log(`     Следующий по плану — ext-${nextAuto.n}. Начинается только твоим словом.`);
   if (pending) console.log(`     (попутно уже накопилось ${pending} пункт(ов) на проверку в docs/uat/CHECKLIST.md)`);
 } else if (pending) {
-  console.log(`     Пройти docs/uat/CHECKLIST.md — ${pending} пункт(ов), затем ok.bat`);
+  console.log(`     Пройти docs/uat/CHECKLIST.md — ${pending} пункт(ов) и сказать, что не сошлось`);
 } else if (blockedBy) {
   console.log(`     Машина своё сделала. Дальше нужен ты: ext-${blockedBy.n} — ${blockedBy.title}`);
 } else {
@@ -121,6 +121,6 @@ if (log) {
 }
 
 console.log('');
-console.log('  Ничего не крутится в фоне: сессии идут, только пока открыто окно auto.bat.');
+console.log('  Ничего не крутится в фоне: автопрогон снят 07.08.2026, этапы идут только по твоему слову.');
 console.log('  Бот на сервере живёт отдельно — его признак жизни это ночное сообщение в Telegram.');
 console.log('');
