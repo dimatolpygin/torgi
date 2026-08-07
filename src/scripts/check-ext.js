@@ -1,6 +1,7 @@
-// UAT-скрипт этапа ext-1: каркас расширения Chrome.
+// UAT-скрипт этапов ext-1 и ext-2: каркас расширения Chrome и считывание токена проверки.
 // Офлайн: проверяет манифест, наличие и синтаксис файлов и логику библиотек
-// (минское время, распознавание кабинета). В сеть не ходит, Chrome не нужен.
+// (минское время, распознавание кабинета, срок годности токена и подсказки человеку).
+// В сеть не ходит, Chrome не нужен.
 // Запуск: node src/scripts/check-ext.js
 import fs from 'node:fs';
 import path from 'node:path';
@@ -63,7 +64,7 @@ for (const rel of declared) {
 const extras = ['popup.js', 'popup.css', 'README.md'];
 for (const rel of extras) check(`файл на месте: ${rel}`, fs.existsSync(path.join(EXT, rel)));
 
-for (const rel of ['lib/minsk.js', 'lib/account.js', 'content.js', 'popup.js']) {
+for (const rel of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'content.js', 'popup.js']) {
   let ok = true;
   let err = '';
   try {
@@ -76,7 +77,7 @@ for (const rel of ['lib/minsk.js', 'lib/account.js', 'content.js', 'popup.js']) 
 }
 
 const popupHtml = fs.readFileSync(path.join(EXT, 'popup.html'), 'utf8');
-for (const src of ['lib/minsk.js', 'lib/account.js', 'popup.js', 'popup.css']) {
+for (const src of ['lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'popup.js', 'popup.css']) {
   check(`popup.html подключает ${src}`, popupHtml.includes(src));
 }
 
@@ -85,7 +86,8 @@ for (const src of ['lib/minsk.js', 'lib/account.js', 'popup.js', 'popup.css']) {
 // начнёт врать, а заметить это будет нечем.
 const ids = (html) => [...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]).sort();
 const previewHtml = fs.readFileSync(path.join(EXT, 'dev', 'preview.html'), 'utf8');
-check('превью использует ту же разметку, что панель', JSON.stringify(ids(previewHtml)) === JSON.stringify(ids(popupHtml)), ids(popupHtml).join(', '));
+const missingInPreview = ids(popupHtml).filter((id) => !ids(previewHtml).includes(id));
+check('превью содержит всю разметку панели', missingInPreview.length === 0, `не хватает: ${missingInPreview.join(', ') || '—'}`);
 check('превью не попало в манифест', !JSON.stringify(manifest).includes('preview'));
 
 // --- Минское время ----------------------------------------------------------
@@ -176,9 +178,100 @@ check('готовность: всё хорошо', acc.readiness({ onSubmitPage:
 check('готовность: не та страница', /не страница подачи/.test(acc.readiness({ onSubmitPage: false, account: a1 }).text));
 check('готовность: кабинет не виден', /войдите на сайт/i.test(acc.readiness({ onSubmitPage: true, account: a2 }).text));
 
+// --- Проверка на робота: токен (этап ext-2) ---------------------------------
+logger.info('--- Токен проверки на робота ---');
+const guard = loadLib('lib/guard.js');
+
+check('поле токена Turnstile известно', guard.TOKEN_FIELD_NAMES[0] === 'cf-turnstile-response');
+check('срок жизни токена — 5 минут', guard.TOKEN_TTL_MS === 300000);
+
+check(
+  'провайдер опознаётся по скрипту',
+  guard.guardKindFromSources({ scripts: ['https://challenges.cloudflare.com/turnstile/v0/api.js'] }) === 'turnstile',
+);
+check('провайдер опознаётся по iframe виджета', guard.guardKindFromSources({ iframes: ['https://challenges.cloudflare.com/cdn-cgi/challenge-platform/x'] }) === 'turnstile');
+check('провайдер опознаётся по классу контейнера', guard.guardKindFromSources({ classes: ['row', 'cf-turnstile'] }) === 'turnstile');
+check('провайдер опознаётся по имени поля', guard.guardKindFromSources({ inputNames: ['fam', 'cf-turnstile-response'] }) === 'turnstile');
+check('чужой провайдер не путается с Turnstile', guard.guardKindFromSources({ classes: ['g-recaptcha'] }) === 'recaptcha');
+check('чистая страница — защиты нет', guard.guardKindFromSources({ scripts: ['/js/rinki/rinki.reg.js'], inputNames: ['fam'] }) === null);
+
+// Ночной сценарий: полночь через 3 минуты.
+const midnight = Date.UTC(2026, 7, 11, 21, 0, 0); // 00:00 по Минску
+const t3 = midnight - 3 * 60 * 1000; // 23:57
+
+const stFresh = guard.tokenStatus({ token: 'abc', seenAt: t3, now: t3 + 1000, targetMs: midnight });
+check('токен, взятый в 23:57, доживает до полуночи', stFresh.state === 'valid' && stFresh.coversTarget === true, `остаток ${Math.round(stFresh.leftMs / 1000)} с`);
+
+// Взят в 23:53:30 — сейчас ещё жив (полторы минуты в запасе), но до 00:00 не дотянет.
+// Это самый коварный случай: панель обязана ругаться, пока токен выглядит рабочим.
+const stEarly = guard.tokenStatus({ token: 'abc', seenAt: midnight - 6.5 * 60 * 1000, now: t3, targetMs: midnight });
+check('живой токен, которому не хватит до полуночи, помечен как непригодный', stEarly.state === 'valid' && stEarly.coversTarget === false, `остаток ${Math.round(stEarly.leftMs / 1000)} с`);
+
+const stExpired = guard.tokenStatus({ token: 'abc', seenAt: midnight - 9 * 60 * 1000, now: midnight - 2 * 60 * 1000, targetMs: midnight });
+check('истёкший токен опознан', stExpired.state === 'expired' && stExpired.leftMs === 0);
+
+const stSoon = guard.tokenStatus({ token: 'abc', seenAt: midnight - 4.5 * 60 * 1000, now: midnight - 30 * 1000, targetMs: midnight });
+check('токен на исходе помечен отдельно', stSoon.state === 'soon');
+
+const stNone = guard.tokenStatus({ token: '', now: t3, targetMs: midnight });
+check('нет токена — состояние none, срок не выдумывается', stNone.state === 'none' && stNone.expiresAt === null && stNone.coversTarget === false);
+
+const win = guard.refreshWindow(midnight);
+check(
+  'окно прохождения проверки: не раньше 23:55:30 и не позже 23:59:30',
+  win.notBefore === midnight - 4.5 * 60 * 1000 && win.deadline === midnight - 30 * 1000,
+);
+
+// Подсказки человеку — то, ради чего этап и делался: предупредить ДО полуночи.
+const advice = (o) => guard.guardAdvice({ kind: 'turnstile', widgetSeen: true, targetMs: midnight, ...o });
+
+check(
+  'задолго до полуночи отсутствие токена — не тревога',
+  advice({ status: stNone, now: midnight - 40 * 60 * 1000, pageAgeMs: 5000 }).level === 'wait',
+);
+check(
+  'в окне подачи отсутствие токена — тревога',
+  advice({ status: stNone, now: t3, pageAgeMs: 60000 }).level === 'bad',
+);
+check(
+  'виджет висит, токена нет — подсказываем нажать галочку',
+  /галочку/.test(advice({ status: stNone, now: midnight - 40 * 60 * 1000, pageAgeMs: 30000 }).text),
+);
+check(
+  'токен не доживёт до полуночи — предупреждаем заранее',
+  advice({ status: stEarly, now: t3 }).level === 'bad' && /до полуночи/.test(advice({ status: stEarly, now: t3 }).text),
+);
+check('истёкший токен — прямое указание пройти заново', /заново/.test(advice({ status: stExpired, now: midnight - 2 * 60000 }).text));
+check('всё хорошо — зелёный совет', advice({ status: stFresh, now: t3 + 1000 }).level === 'ok');
+check(
+  'токен был до открытия панели — просим обновить на всякий случай',
+  advice({ status: guard.tokenStatus({ token: 'abc', seenAt: t3, issuedKnown: false, now: t3 + 1000, targetMs: midnight }), now: t3 + 1000 }).level === 'ok',
+);
+check(
+  'проверки на странице нет — панель говорит и это',
+  guard.guardAdvice({ kind: null, targetMs: midnight, now: t3, status: stNone }).level === 'wait',
+);
+
+check('время выдачи печатается по-мински', minsk.formatTimeRu(t3) === '23:57:00', minsk.formatTimeRu(t3));
+check('остаток годности печатается как м:сс', minsk.formatLeft(271000) === '4:31', minsk.formatLeft(271000));
+
+// Content script обязан читать токен опросом: виджет присваивает .value, и MutationObserver
+// такое присваивание не видит — если опрос пропадёт, токен молча перестанет замечаться.
+const contentSrc = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+check('токен считывается опросом (setInterval), а не только через MutationObserver', /setInterval\(pollGuard/.test(contentSrc));
+// Панели отдаём факт и длину токена, но не сам токен: чем меньше мест, где он лежит,
+// тем меньше поводов ему утечь. Проверяем именно блок ответа, а не весь файл —
+// внутри content script токен, разумеется, есть.
+const guardBlock = contentSrc.match(/guard:\s*\{[\s\S]*?\n {4}\},/)?.[0] || '';
+check('блок ответа панели найден', guardBlock.length > 0);
+check(
+  'сам токен панели не отдаётся — только факт и длина',
+  /hasToken/.test(guardBlock) && /tokenLength/.test(guardBlock) && !/\btoken:/.test(guardBlock),
+);
+
 // --- Итог -------------------------------------------------------------------
 if (failed) {
   logger.error(`Проверка не пройдена: ошибок ${failed}`);
   process.exit(1);
 }
-logger.info('Все проверки этапа ext-1 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');
+logger.info('Все проверки этапов ext-1 и ext-2 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');

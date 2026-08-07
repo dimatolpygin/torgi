@@ -101,6 +101,20 @@ body {
   color: var(--bad-fg);
 }
 
+.value.ok {
+  color: var(--ok-fg);
+}
+
+.value.bad {
+  color: var(--bad-fg);
+}
+
+.advice {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .foot {
   margin-top: 10px;
   color: var(--muted);

@@ -2,16 +2,42 @@
 <!--
   Предпросмотр панели БЕЗ Chrome и без сайта: открывается двойным кликом в браузере.
   Chrome API подменён заглушкой, которая отвечает так, будто открыта страница подачи
-  залогиненного кабинета. Нужен только для разработки и показа — в manifest.json НЕ входит
-  и в работе расширения не участвует.
+  залогиненного кабинета. Переключатель сверху показывает состояния проверки на робота,
+  которых вживую пришлось бы ждать. Нужен только для разработки и показа —
+  в manifest.json НЕ входит и в работе расширения не участвует.
 -->
 <html lang="ru">
   <head>
     <meta charset="utf-8" />
     <title>Предпросмотр панели «Бронь»</title>
     <link rel="stylesheet" href="../popup.css" />
+    <style>
+      .dev-switch {
+        margin: 0 0 12px;
+        padding: 8px;
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .dev-switch select {
+        width: 100%;
+        margin-top: 4px;
+      }
+    </style>
   </head>
   <body>
+    <div class="dev-switch">
+      Предпросмотр (настоящих данных здесь нет). Состояние проверки:
+      <select id="scenario">
+        <option value="fresh">токен получен минуту назад — всё хорошо</option>
+        <option value="none">проверка не пройдена</option>
+        <option value="expiring">токен вот-вот истечёт</option>
+        <option value="expired">токен истёк</option>
+        <option value="guest">кабинет не виден (не вошли на сайт)</option>
+      </select>
+    </div>
+
     <div class="card">
       <div class="label">До подачи</div>
       <div id="countdown" class="countdown">--:--:--</div>
@@ -28,19 +54,28 @@
       <div id="booking" class="value">—</div>
     </div>
 
+    <div class="row">
+      <div class="label">Проверка на робота</div>
+      <div id="token" class="value">—</div>
+    </div>
+
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
+    <div id="advice" class="advice"></div>
 
     <div class="foot">
-      Этап 1: панель только смотрит. Заявку пока не подаёт — это следующие этапы.
+      Панель пока только смотрит. Заявку не подаёт — это следующие этапы.
     </div>
 
     <script>
       // Заглушка Chrome API: выдаёт вымышленный кабинет (никаких настоящих данных).
+      // Панель опрашивает её раз в секунду, поэтому смена сценария видна сразу.
       window.chrome = {
         runtime: { lastError: null },
         tabs: {
           query: async () => [{ id: 1 }],
           sendMessage: (_tabId, _msg, cb) => {
+            const scenario = document.getElementById('scenario').value;
+            const now = Date.now();
             const target = nextRegistrationMidnight();
             const account = accountFromFields({
               fam: 'Иванова',
@@ -49,9 +84,38 @@
               t_contakt: '+375291234567',
               n_mail: 'ivanova@example.by',
               type_person: 'fiz',
-              is_login: '1',
+              is_login: scenario === 'guest' ? '0' : '1',
             });
-            const state = { onSubmitPage: true, account, target, booking: bookingDateFor(target) };
+
+            const seenAt = { fresh: now - 60 * 1000, expiring: now - 4.5 * 60 * 1000, expired: now - 6 * 60 * 1000 }[scenario];
+            const token = seenAt == null ? '' : 'demo-token';
+            const status = tokenStatus({ token, seenAt, issuedKnown: true, targetMs: target.ms });
+            const advice = guardAdvice({
+              kind: 'turnstile',
+              widgetSeen: true,
+              status,
+              targetMs: target.ms,
+              pageAgeMs: 60 * 1000,
+            });
+
+            const state = {
+              onSubmitPage: true,
+              account,
+              target,
+              booking: bookingDateFor(target),
+              guard: {
+                kind: 'turnstile',
+                widgetSeen: true,
+                fieldName: 'cf-turnstile-response',
+                hasToken: !!token,
+                tokenLength: token.length,
+                seenAt: seenAt == null ? null : seenAt,
+                issuedKnown: true,
+                renewals: 0,
+                status,
+                advice,
+              },
+            };
             state.readiness = readiness(state);
             cb({ ok: true, state });
           },
@@ -60,6 +124,7 @@
     </script>
     <script src="../lib/minsk.js"></script>
     <script src="../lib/account.js"></script>
+    <script src="../lib/guard.js"></script>
     <script src="../popup.js"></script>
   </body>
 </html>

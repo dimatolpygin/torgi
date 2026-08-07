@@ -100,6 +100,20 @@ function formatCountdown(ms) {
   return `${h}:${m}:${s}`;
 }
 
+// «23:57:40» по минскому времени — время выдачи токена показываем именно так, чтобы
+// клиентка сравнивала с теми же часами, по которым идёт отсчёт.
+function formatTimeRu(ts, tz) {
+  const p = minskParts(ts, tz);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(p.hour)}:${pad(p.minute)}:${pad(p.second)}`;
+}
+
+// «4:31» — остаток годности токена (минуты:секунды, без часов: он живёт 5 минут).
+function formatLeft(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 // Мост для офлайн-проверки (src/scripts/check-ext.js). В браузере ветка не срабатывает.
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -114,5 +128,7 @@ if (typeof module !== 'undefined' && module.exports) {
     buildDateStr,
     formatDateRu,
     formatCountdown,
+    formatTimeRu,
+    formatLeft,
   };
 }
