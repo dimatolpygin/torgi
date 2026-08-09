@@ -5,7 +5,7 @@
 // К сайту брони отсюда не уходит ни одного запроса — только на адрес, который человек
 // сам вписал в панели.
 
-importScripts('config.js', 'lib/report.js');
+importScripts('config.js', 'lib/report.js', 'lib/send.js');
 
 // Настройки доставки задаёт разработчик в config.js, а не человек в панели: клиентке
 // незачем видеть адреса и общие слова. Пока адрес пуст, отсюда не уходит ничего.
@@ -26,7 +26,20 @@ async function deliver(body) {
   return res;
 }
 
+// Право на подачу (этап ext-5). Если человек открыл форму в двух вкладках, каждая
+// подала бы свои 2 заявки — лимит кабинета 2 места в сутки, лишние получили бы отказ,
+// а частая долбёжка ещё и упирается в ограничение сайта (429 ловили живьём 07.08).
+// Право выдаётся первой попросившей вкладке на конкретную полночь; ей же оно
+// подтверждается при повторном запросе.
+var shotClaims = new Map(); // '<момент полуночи>' → id вкладки
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'CLAIM_SHOT') {
+    const tabId = _sender && _sender.tab && _sender.tab.id != null ? _sender.tab.id : -1;
+    const d = decideClaim(shotClaims, msg.targetMs, tabId);
+    sendResponse({ ok: true, granted: d.granted, holder: d.holder });
+    return false;
+  }
   if (msg && msg.type === 'SEND_REPORT') {
     // Ошибку доставки гасим здесь же: подача уже состоялась, и отчёт не имеет права
     // испортить её итог. Наверх уходит только «получилось/не получилось».

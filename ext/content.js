@@ -127,9 +127,9 @@ function buildPlan(fields, account, booking) {
     assortIds: inputs.assortIds,
   });
   return {
-    // dryRun здесь всегда true: отправлять расширение пока не умеет вовсе — на странице
-    // сайта у него нет ни одного fetch/XHR. Боевой режим появится отдельным этапом (ext-5).
-    dryRun: true,
+    // С этапа ext-5 подача боевая. dryRun остаётся ради разработчика (config.js) и ради
+    // тренировочного залпа в ext/dev/preview.html — клиентке этот флаг не показывается.
+    dryRun: !LIVE_SUBMIT,
     count: BOOKINGS_PER_ACCOUNT,
     typeMesta: inputs.typeMesta,
     assortIds: inputs.assortIds,
@@ -157,15 +157,71 @@ const clockState = {
   offsetMs: 0, // применяемая поправка (мелкую и шумную не применяем)
 };
 
-// Последний залп: что получилось. На этом этапе залп всегда тренировочный — вместо
-// отправки подставлена заглушка, ни одного запроса к сайту не происходит.
 let lastShot = null;
-let armedFor = null; // на какой момент взведён таймер (защита от двойного завода)
+let armedFor = null; // на какой момент взведён таймер по часам ЭТОГО компьютера
+let lastArmTargetMs = null; // та же цель в настоящем времени (для пересчёта поправки)
+let armGen = 0; // поколение завода: старое ожидание отменяется, когда момент пересчитан
 
-// Заглушка отправки. В ext-5 сюда придёт настоящий fetch с токеном; сейчас она только
-// фиксирует, что до неё дошло дело.
+// Тренировочная отправка: ничего не уходит, только отметка, что до неё дошло дело.
+// Живёт для разработчика (LIVE_SUBMIT=false) и для предпросмотра панели.
 function dryRunSend(index) {
   return { dryRun: true, index, at: Date.now() };
+}
+
+// ——— Боевая подача (этап ext-5) ——————————————————————————————————————————
+//
+// Всё, что можно сделать заранее, делается при заводе таймера: тело заявки собрано,
+// право на подачу получено. В 00:00:00.000 остаётся приклеить свежий токен и вызвать
+// fetch — один раз на место, без единой повторной попытки.
+
+const shotPlan = {
+  bodyPrefix: null, // готовое тело без токена
+  url: null,
+  claimed: null, // право на подачу: эта вкладка стреляет, остальные молчат
+};
+
+// За сколько до полуночи расширение само взводит таймер. Панель к этому времени может
+// быть уже закрыта — она всплывающая и живёт, только пока на неё смотрят, поэтому
+// стрелять обязан content script, а не она.
+var ARM_LEAD_MS = 15 * 60 * 1000;
+// За сколько до выстрела спрашиваем право на подачу. Не при заводе: фоновый скрипт
+// Chrome засыпает через полминуты простоя и просыпается с пустой памятью — спрашивать
+// надо тогда, когда все вкладки спросят почти одновременно и решать будет один и тот же
+// проснувшийся экземпляр.
+var CLAIM_LEAD_MS = 5000;
+
+// Право на подачу. Две открытые вкладки формы = два content script'а, и без этого они
+// подали бы по 2 заявки каждая: лимит кабинета 2 места в сутки, лишние заявки — отказ
+// и риск нарваться на ограничение частоты (429 ловили живьём 07.08).
+//
+// Молчание фонового скрипта трактуем как «право есть»: пропустить ночь хуже, чем
+// отправить лишнюю заявку.
+function claimShot(targetMs) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type: 'CLAIM_SHOT', targetMs }, (res) => {
+        void chrome.runtime.lastError;
+        resolve(!res || res.granted !== false);
+      });
+    } catch (e) {
+      resolve(true);
+    }
+  });
+}
+
+// Одна боевая заявка. Вызывается в момент выстрела и обязана быть предельно короткой.
+function liveSend(index) {
+  if (!LIVE_SUBMIT) return dryRunSend(index);
+  if (shotPlan.claimed === false) return { skipped: 'подача идёт в другой вкладке — эта промолчала' };
+  const token = guardState.token;
+  const field = guardState.fieldName || TOKEN_FIELD_NAMES[0];
+  // Без токена сервер отклонит заявку на валидации (это и есть блокер 04.08) — слать
+  // такое бессмысленно, а человеку нужна причина словами, а не код 500.
+  if (!token) return { skipped: 'проверка на робота не пройдена — заявка не отправлена' };
+  return submitOnce({
+    url: shotPlan.url,
+    body: bodyWithToken(shotPlan.bodyPrefix, field, token),
+  });
 }
 
 // Отчёт о ночи фоновому скрипту, а он — нашему серверу (ext-6). Вторичен по отношению
@@ -202,16 +258,47 @@ function armShot(targetMs, count) {
   if (local - Date.now() <= 0) return { ok: false, error: 'момент уже прошёл' };
 
   armedFor = local;
+  lastArmTargetMs = targetMs;
+  armGen += 1;
+  const gen = armGen;
   // Дату брони фиксируем ПРИ ЗАВОДЕ: после полуночи «ближайшая ночь» становится
   // следующей, и итог рассказывал бы про завтрашнюю дату вместо только что поданной.
   const bookingAtArm = bookingDateFor(nextRegistrationMidnight());
+
+  // Тело заявки готовим здесь, за минуты до выстрела. В 00:00:00.000 к нему добавится
+  // только токен: сборка payload в момент залпа стоила бы миллисекунд на ровном месте.
+  const inputs = readOrderInputs();
+  const payload = buildCreateZajavPayload({
+    fields: collectFields(),
+    rinokId: RINOK_ID,
+    typeMesta: inputs.typeMesta,
+    day: bookingAtArm.day,
+    month: bookingAtArm.month,
+    year: bookingAtArm.year,
+    assortIds: inputs.assortIds,
+  });
+  shotPlan.bodyPrefix = prepareBody(payload);
+  shotPlan.url = CREATE_PATH; // свой же origin, кука страницы уезжает вместе с запросом
+  shotPlan.claimed = null;
+  setTimeout(
+    () => {
+      if (gen !== armGen) return;
+      claimShot(targetMs).then((granted) => {
+        if (gen === armGen) shotPlan.claimed = granted;
+      });
+    },
+    Math.max(0, local - Date.now() - CLAIM_LEAD_MS),
+  );
+
   shootAt({
     localTargetMs: local,
     offsetMs: clockState.offsetMs,
     count: count || BOOKINGS_PER_ACCOUNT,
-    sendOne: dryRunSend,
+    sendOne: LIVE_SUBMIT ? liveSend : dryRunSend,
+    deps: { stale: () => gen !== armGen },
   }).then((report) => {
-    report.dryRun = true;
+    if (report.cancelled) return; // момент пересчитали — стреляет уже другой завод
+    report.dryRun = !LIVE_SUBMIT;
     report.targetMs = targetMs;
     // Итог считаем СРАЗУ после залпа и кладём в состояние: панель забирает его следующим
     // же опросом (раз в секунду), поэтому «принято 2 из 2» видно без обновления страницы.
@@ -223,6 +310,22 @@ function armShot(targetMs, count) {
 
   return { ok: true, localTargetMs: local, inMs: local - Date.now() };
 }
+
+// Самозавод. Панель — всплывающая: она закрывается, как только человек щёлкнул мимо, и
+// вместе с ней умер бы любой таймер, заведённый в ней. Поэтому за полночь отвечает
+// страница: она открыта до утра («не закрывайте вкладку»), и в 23:45 сама берёт цель.
+function maybeArm() {
+  if (armedFor !== null) return;
+  const target = nextRegistrationMidnight();
+  if (target.ms - Date.now() > ARM_LEAD_MS) return;
+  // Не та страница или кабинет не виден — заводить нечего: подавать не от кого.
+  const state = readState();
+  if (!state.readiness.ok) return;
+  armShot(target.ms, BOOKINGS_PER_ACCOUNT);
+}
+
+setInterval(maybeArm, 1000);
+maybeArm();
 
 // ——— Ответ панели ————————————————————————————————————————————————————————
 
@@ -296,6 +399,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       // чтобы не двигать выстрел по случайному джиттеру сети.
       clockState.sync = msg.sync || null;
       clockState.offsetMs = usableOffset(msg.sync);
+      // Таймер мог быть заведён до замера — тогда он целится по часам ПК. Переназначаем
+      // момент: старое ожидание отменится само (см. stale в lib/shot.js).
+      if (armedFor !== null && lastArmTargetMs != null) {
+        const fresh = localTargetMs(lastArmTargetMs, clockState.offsetMs);
+        if (Math.abs(fresh - armedFor) > 1) {
+          armedFor = null;
+          armGen += 1; // отменяем старое ожидание, чтобы оно не выстрелило вторым залпом
+          armShot(lastArmTargetMs, BOOKINGS_PER_ACCOUNT);
+        }
+      }
       sendResponse({ ok: true, offsetMs: clockState.offsetMs });
     } else if (msg && msg.type === 'ARM_SHOT') {
       sendResponse({ ok: true, armed: armShot(msg.targetMs, msg.count) });

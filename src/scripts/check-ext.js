@@ -387,11 +387,10 @@ check('всё готово — помех нет', order.planProblems({ account:
 check('нет токена — сказано прямо', /проверка на робота/.test(order.planProblems({ account: okAcc, day: 15, hasToken: false, tokenField: 'cf-turnstile-response' })[0]));
 check('не вошли в кабинет — сказано прямо', /кабинет не виден/.test(order.planProblems({ account: acc.accountFromFields({}), day: 15, hasToken: true, tokenField: 'x' })[0]));
 
-// Dry-run по-настоящему: в коде расширения не должно быть НИ ОДНОГО способа
-// отправить запрос. Это проверяется по всем файлам, а не по флагу в настройках.
-// С этапа ext-4 в расширении появился ровно ОДИН сетевой запрос — замер часов, и живёт
-// он в отдельном файле clocksync.js, подключённом только к панели. На странице сайта
-// (content script и его библиотеки) способов отправки по-прежнему нет ни одного.
+// Отправка сосчитана поимённо. До ext-5 здесь проверялось, что отправлять физически
+// нечем; теперь боевая подача есть, и проверка стала строже: на странице сайта ровно
+// ОДИН способ отправки, он живёт в lib/send.js и адресован create_zajav. Всё остальное —
+// по-прежнему только чтение.
 const extFiles = ['content.js', 'popup.js', 'lib/minsk.js', 'lib/account.js', 'lib/guard.js', 'lib/order.js', 'lib/clock.js', 'lib/shot.js', 'lib/outcome.js'];
 const senders = [];
 for (const rel of extFiles) {
@@ -400,7 +399,12 @@ for (const rel of extFiles) {
     if (re.test(src)) senders.push(`${rel}: ${re}`);
   }
 }
-check('на странице сайта у расширения нет ни одного способа отправки', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
+check('кроме файла подачи, на странице отправлять нечем', senders.length === 0, senders.join('; ') || 'ни fetch, ни XHR, ни sendBeacon, ни form.submit');
+const sendSrc = fs.readFileSync(path.join(EXT, 'lib', 'send.js'), 'utf8');
+check('в файле подачи ровно один запрос', (sendSrc.match(/\bfetch\s*\(/g) || []).length === 1, String((sendSrc.match(/\bfetch\s*\(/g) || []).length));
+check('подача не умеет повторять попытки', !/\bfor\s*\(|\bwhile\s*\(|retry/i.test(sendSrc), 'ни цикла, ни retry');
+check('заявка уходит с кукой кабинета', /credentials:\s*'same-origin'/.test(sendSrc));
+check('заявка помечена как AJAX — иначе сайт не ответит JSON', /'x-requested-with':\s*'XMLHttpRequest'/.test(sendSrc));
 check('в манифесте нет прав на перехват чужих запросов', !(manifest.permissions || []).includes('webRequest'));
 
 const clocksyncSrc = fs.readFileSync(path.join(EXT, 'clocksync.js'), 'utf8');
@@ -753,9 +757,134 @@ check('тренировка помечена тренировкой', /трен�
 check('видно, что подало расширение, а не бот', /из браузера/.test(tgOk));
 check('точность выстрела в сообщении есть', /Точность выстрела/.test(tgOk));
 
+// --- Боевая подача (этап ext-5) ---------------------------------------------
+// Здесь проверяется то, что раньше было заглушкой: расширение действительно умеет
+// отправить заявку. Сайт при этом не трогается ни разу — fetch подменяется, и видно,
+// что именно ушло бы.
+logger.info('--- Боевая подача: что и как уходит ---');
+const send = loadLib('lib/send.js', {
+  encodeForm: order.encodeForm,
+  setTimeout,
+  clearTimeout,
+  AbortController,
+});
+
+check('расширение уезжает клиентке боевым, а не тренировочным', cfg.LIVE_SUBMIT === true);
+const csJs = cs.js || [];
+check('настройки подключены к странице раньше кода', csJs.indexOf('config.js') === 0);
+check('файл подачи подключён к странице до content.js', csJs.indexOf('lib/send.js') > 0 && csJs.indexOf('lib/send.js') < csJs.indexOf('content.js'));
+
+// Тело готовится заранее — в 00:00:00.000 к нему только приклеивается свежий токен.
+const sendPayload = buildCreateZajavPayload({
+  fields: FIELDS,
+  rinokId: 10,
+  typeMesta: 2,
+  day: 15,
+  month: 8,
+  year: 2026,
+  assortIds: [2],
+});
+const prefix = send.prepareBody(sendPayload);
+check('заготовка тела — то же, что шлёт бот', prefix === order.encodeForm(sendPayload));
+check('в заготовке нет поля токена', !prefix.includes('cf-turnstile-response'));
+const liveBodyText = send.bodyWithToken(prefix, 'cf-turnstile-response', 'AAA.BBB+CCC/DDD=');
+check('токен приклеивается последним полем', liveBodyText.startsWith(`${prefix}&cf-turnstile-response=`));
+check('токен кодируется, а не ломает тело', liveBodyText.endsWith('AAA.BBB%2BCCC%2FDDD%3D'), liveBodyText.slice(-30));
+check('без токена тело остаётся собой', send.bodyWithToken(prefix, 'cf-turnstile-response', '') === prefix);
+
+// Что именно уходит на сайт — смотрим подменённым fetch.
+let sentReq = null;
+const fakeFetch = (url, opts) => {
+  sentReq = { url, opts };
+  return Promise.resolve({ status: 200, text: () => Promise.resolve('{"code":"201"}') });
+};
+const okRes = await send.submitOnce({ url: '/rinki/minsk/create_zajav/', body: liveBodyText, deps: { fetch: fakeFetch } });
+check('адрес подачи — тот же, что у бота', sentReq.url === '/rinki/minsk/create_zajav/', sentReq.url);
+check('метод POST', sentReq.opts.method === 'POST');
+check('кука кабинета уезжает с заявкой', sentReq.opts.credentials === 'same-origin');
+check('тело — form-urlencoded, как ждёт сайт', sentReq.opts.headers['content-type'].startsWith('application/x-www-form-urlencoded'));
+check('запрос помечен как AJAX', sentReq.opts.headers['x-requested-with'] === 'XMLHttpRequest');
+check('ответ сервера возвращается как есть', okRes.status === 200 && okRes.text === '{"code":"201"}');
+check('принятая заявка опознана итогом', outcome.readAnswer(okRes).accepted === true);
+
+// Ночь 04.08: вместо JSON пришла страница проверки. Так это и должно называться.
+const challenge = await send.submitOnce({ url: '/x/', body: 'a=1', deps: { fetch: () => Promise.resolve({ status: 403, text: () => Promise.resolve('<html>Just a moment…</html>') }) } });
+check('страница челленджа не выдаётся за отказ по полям', outcome.readAnswer(challenge).kind === 'notjson', outcome.readAnswer(challenge).reason);
+
+// Интернет отвалился. Это не «сайт отклонил» — разница для человека принципиальная.
+const dead = await send.submitOnce({ url: '/x/', body: 'a=1', deps: { fetch: () => Promise.reject(new Error('Failed to fetch')) } });
+check('обрыв связи назван обрывом, а не отказом сайта', dead.networkError && outcome.readAnswer(dead).kind === 'network', outcome.readAnswer(dead).reason);
+
+// Сервер молчит дольше отведённого — ждать до утра нельзя.
+const hung = await send.submitOnce({
+  url: '/x/',
+  body: 'a=1',
+  timeoutMs: 40,
+  deps: { fetch: (_u, o) => new Promise((_res, rej) => o.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'AbortError' })))) },
+});
+check('молчащий сервер обрывается по таймауту', /не ответил вовремя/.test(hung.networkError || ''), hung.networkError);
+
+// Заявку осознанно не отправили — это отдельный исход, не отказ и не сбой.
+const skipAnswer = outcome.readAnswer({ skipped: 'проверка на робота не пройдена — заявка не отправлена' });
+check('«не отправляли» показано отдельно от отказа', skipAnswer.kind === 'skipped' && /проверка на робота/.test(skipAnswer.reason));
+
+// Две открытые вкладки формы — стреляет одна. Иначе кабинет получил бы 4 заявки на
+// лимите в 2 места и рисковал бы нарваться на ограничение частоты.
+const claims = new Map();
+const c1 = send.decideClaim(claims, 1770000000000, 11);
+const c2 = send.decideClaim(claims, 1770000000000, 22);
+const c1again = send.decideClaim(claims, 1770000000000, 11);
+const cNext = send.decideClaim(claims, 1770086400000, 22);
+check('право на подачу получает первая вкладка', c1.granted === true);
+check('вторая вкладка молчит', c2.granted === false && c2.holder === 11);
+check('та же вкладка подтверждает своё право', c1again.granted === true);
+check('на следующую ночь право разыгрывается заново', cNext.granted === true);
+
+// Залп: обе заявки уходят в одном такте и с ОДНИМ И ТЕМ ЖЕ токеном. Хватит ли одного
+// токена на два места — вопрос A, его закрывает живая ночь; здесь фиксируется, что
+// расширение шлёт именно так, и по ответу сервера будет что разбирать.
+const bodies = [];
+const volleyRes = await shot.volley(2, (i) => {
+  bodies.push(send.bodyWithToken(prefix, 'cf-turnstile-response', 'TOKEN-XYZ'));
+  return { status: 200, text: `{"code":"201","i":${i}}` };
+});
+check('в залпе ровно две заявки', volleyRes.results.length === 2);
+check('обе заявки несут один и тот же токен', bodies[0] === bodies[1] && bodies[0].includes('TOKEN-XYZ'));
+check('обе заявки собраны в одном такте', volleyRes.starts[1] - volleyRes.starts[0] <= 2, `разъезд ${volleyRes.starts[1] - volleyRes.starts[0]} мс`);
+
+// Часы уточнились уже после завода таймера — старое ожидание обязано отмениться,
+// иначе выстрелов будет два.
+let staleFired = 0;
+let staleNow = false;
+// Панель домерила часы через 50 мс после завода — момент пересчитан, старое ожидание
+// должно тихо умереть, не выстрелив.
+setTimeout(() => {
+  staleNow = true;
+}, 50);
+const cancelled = await shot.shootAt({
+  localTargetMs: Date.now() + 500,
+  count: 2,
+  sendOne: () => {
+    staleFired += 1;
+    return { dryRun: true };
+  },
+  deps: { stale: () => staleNow },
+});
+check("отменённый выстрел не стреляет", cancelled.cancelled === true && staleFired === 0, `отправок ${staleFired}`);
+
+// Живой код content.js: что делается заранее, а что в момент выстрела.
+const contentLive = fs.readFileSync(path.join(EXT, 'content.js'), 'utf8');
+check('тело заявки готовится при заводе, а не в 00:00', /shotPlan\.bodyPrefix = prepareBody\(/.test(contentLive) && !/prepareBody\(/.test(contentLive.slice(contentLive.indexOf('function liveSend'), contentLive.indexOf('function deliverReport'))));
+check('в момент выстрела берётся свежий токен, а не сохранённый', /const token = guardState\.token/.test(contentLive));
+check('без токена заявка не уходит вовсе', /if \(!token\) return \{ skipped:/.test(contentLive));
+check('страница взводит таймер сама — панель к полуночи закрыта', /setInterval\(maybeArm, 1000\)/.test(contentLive));
+check('таймер взводится заранее, а не в последнюю секунду', /ARM_LEAD_MS = 15 \* 60 \* 1000/.test(contentLive));
+check('право на подачу спрашивается до выстрела', contentLive.indexOf('claimShot(targetMs)') < contentLive.indexOf('shootAt({'));
+check('повторных попыток подачи нет', !/подать ещё раз|retry|attempt\s*\+\+/i.test(contentLive));
+
 // --- Итог -------------------------------------------------------------------
 if (failed) {
   logger.error(`Проверка не пройдена: ошибок ${failed}`);
   process.exit(1);
 }
-logger.info('Все проверки этапов ext-1…ext-6 пройдены. Осталась живая: поставить в Chrome по ext/README.md.');
+logger.info('Все проверки этапов ext-1…ext-6 пройдены (боевая подача ext-5 — код). Осталась живая: поставить в Chrome по ext/README.md.');

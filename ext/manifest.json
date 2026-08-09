@@ -16,10 +16,12 @@
         "https://gorod.it-minsk.by/rinki/minsk/reg/*"
       ],
       "js": [
+        "config.js",
         "lib/minsk.js",
         "lib/account.js",
         "lib/guard.js",
         "lib/order.js",
+        "lib/send.js",
         "lib/clock.js",
         "lib/shot.js",
         "lib/outcome.js",

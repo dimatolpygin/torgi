@@ -9,10 +9,16 @@
 var REPORT_URL = '';
 var REPORT_SECRET = '';
 
+// Боевая подача. true = в 00:00 расширение действительно отправляет заявки на сайт.
+// Так оно и должно уезжать к клиентке: расширение, которое молча ничего не подаёт, —
+// худший из возможных исходов ночи. false нужен ровно одному человеку — разработчику,
+// который гоняет расширение в настоящем браузере и не хочет занять реальное место.
+var LIVE_SUBMIT = true;
+
 function reportConfigured() {
   return !!(REPORT_URL && REPORT_SECRET);
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { REPORT_URL, REPORT_SECRET, reportConfigured };
+  module.exports = { REPORT_URL, REPORT_SECRET, LIVE_SUBMIT, reportConfigured };
 }

@@ -30,6 +30,11 @@ function readAnswer(item) {
   const r = it.ok === true ? it.result : it;
   if (!r) return { accepted: false, kind: 'network', reason: 'ответа не было' };
   if (r.dryRun) return { accepted: false, kind: 'drill', reason: 'тренировка — ничего не отправлялось' };
+  // Заявку осознанно не отправили (нет токена, подача идёт в другой вкладке). Это не
+  // отказ сайта и не сбой — человеку важно видеть разницу.
+  if (r.skipped) return { accepted: false, kind: 'skipped', reason: String(r.skipped) };
+  // Запрос ушёл, но ответа нет: обрыв, таймаут, отвалившийся интернет.
+  if (r.networkError) return { accepted: false, kind: 'network', reason: `не отправилось (${r.networkError})` };
 
   const http = r.status == null ? null : Number(r.status);
   // 429 ловили живьём в ночь 07.08 на повторных попытках бота — расширение бьёт один раз,

@@ -17,9 +17,17 @@ function waitUntil(localTargetMs, deps) {
   const d = deps || {};
   const now = d.now || (() => Date.now());
   const later = d.setTimeout || ((fn, ms) => setTimeout(fn, ms));
+  // Ожидание можно отменить: панель меряет часы уже после завода таймера, и найденная
+  // поправка обязана подвинуть момент. Проверяем на каждом шаге таймера — в последние
+  // 200 мс отменять уже поздно и не нужно.
+  const stale = d.stale || (() => false);
 
   return new Promise((resolve) => {
     const step = () => {
+      if (stale()) {
+        resolve(null);
+        return;
+      }
       const left = localTargetMs - now();
       if (left > BUSY_WAIT_MS) {
         later(step, left - BUSY_WAIT_MS);
@@ -65,8 +73,10 @@ function shootAt(input) {
   const now = deps.now || (() => Date.now());
   const local = o.localTargetMs;
 
-  return waitUntil(local, deps).then((wokeAt) =>
-    volley(o.count || 1, o.sendOne, deps).then((v) =>
+  return waitUntil(local, deps).then((wokeAt) => {
+    // Ожидание отменили (часы уточнились, момент пересчитан) — залпа не было.
+    if (wokeAt === null) return { cancelled: true, count: 0, results: [], text: 'Выстрел переназначен' };
+    return volley(o.count || 1, o.sendOne, deps).then((v) =>
       volleyReport({
         localTargetMs: local,
         offsetMs: o.offsetMs || 0,
@@ -75,8 +85,8 @@ function shootAt(input) {
         results: v.results,
         finishedAt: now(),
       }),
-    ),
-  );
+    );
+  });
 }
 
 // Разбор того, что получилось. Две разные величины, их нельзя путать:
