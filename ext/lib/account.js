@@ -5,9 +5,17 @@
 // Чистые функции: на вход обычный объект {имя поля: значение}, никакого DOM — так их
 // можно прогнать из node в офлайн-проверке.
 
-// Поля формы reg/fiz, из которых бот собирает заявку (src/site/order.js).
-function accountFromFields(fields) {
+// Поля формы reg/fiz + приметы шапки страницы.
+//
+// ВАЖНО (выяснено 09.08.2026 на живом залогиненном кабинете): сайт **не подставляет ФИО
+// в форму** даже вошедшему — `fam`, `name`, `otc`, телефон и почта приходят ПУСТЫМИ, а
+// персону сервер берёт из сессии уже в момент подачи (так же работает и бот: он шлёт эти
+// поля пустыми, и заявки принимаются). Поэтому судить о входе по ФИО нельзя — с этим
+// панель была бы красной всегда. Судим по `is_login=1` и по шапке: там сайт пишет
+// «Личный кабинет пользователя <код>» и ссылку «Выход».
+function accountFromFields(fields, header) {
   const f = fields || {};
+  const h = header || {};
   const val = (name) => String(f[name] == null ? '' : f[name]).trim();
   const fam = val('fam');
   const name = val('name');
@@ -18,21 +26,27 @@ function accountFromFields(fields) {
     fam,
     name,
     otc,
+    // Код кабинета из шапки. У жены и мужа он разный — по нему человек и различает,
+    // в каком профиле Chrome сейчас сидит (этап ext-7).
+    cabinetId: String(h.cabinetId || '').trim(),
     personId: val('n_persn'),
     phone: val('t_contakt'),
     email: val('n_mail'),
     typePerson: val('type_person'),
-    // is_login=1 сервер ставит залогиненному. Пустое ФИО при is_login=1 — тоже «не вошли»:
-    // подавать заявку от пустой персоны бессмысленно.
-    loggedIn: val('is_login') === '1' && fio !== '',
+    // Единственный надёжный признак — поле is_login: у анонима его в форме НЕТ вовсе,
+    // у вошедшего оно = 1. Ссылку «Выход» сайт держит в разметке всегда (это скрытое
+    // окно входа), поэтому судить по ней нельзя — проверено на обеих живых страницах.
+    loggedIn: val('is_login') === '1',
   };
 }
 
-// Короткое «Иванова А. П.» — панель узкая, полное ФИО в неё не влезает.
-function shortFio(account) {
-  if (!account || !account.fio) return '';
-  const initials = [account.name, account.otc].filter(Boolean).map((s) => s[0].toUpperCase() + '.');
-  return [account.fam, ...initials].filter(Boolean).join(' ') || account.fio;
+// Как назвать кабинет в панели. ФИО сайт не даёт, поэтому показываем то, что даёт.
+function accountLabel(account) {
+  const a = account || {};
+  if (!a.loggedIn) return 'не вижу';
+  if (a.fio) return a.fio;
+  if (a.cabinetId) return `кабинет ${a.cabinetId}`;
+  return 'вход выполнен';
 }
 
 // Страница подачи заявки (а не любая другая страница ЛК). Судить по одному адресу нельзя:
@@ -56,15 +70,29 @@ function isSubmitPage(url, page) {
   return SUBMIT_FIELD_MARKERS.every((n) => names.includes(n));
 }
 
+// Разбор шапки страницы. Отдельной функцией, чтобы её можно было прогнать из node на
+// сохранённой странице сайта, а не только в браузере.
+// Годится и для видимого текста страницы (браузер), и для сырого HTML (проверки из node):
+// теги вырезаются, разделители между словами могут быть любыми — в живой вёрстке там
+// стоит <br>, из-за которого «кабинет пользователя» одним пробелом не ищется.
+function parseHeader(text) {
+  const raw = String(text || '');
+  const t = raw.replace(/<[^>]+>/g, ' ');
+  const m = /Личный кабинет\s+пользователя\s+([A-Za-z0-9_-]{4,})/i.exec(t);
+  // Только код кабинета. Ссылку «Выход» отсюда намеренно не возвращаем: она есть в
+  // разметке и у неавторизованного (скрытое окно входа) и признаком входа не является.
+  return { cabinetId: m ? m[1] : '' };
+}
+
 // Готовность к ночи одной строкой: что мешает подать. Порядок важен — сначала то,
 // что человек может починить прямо сейчас.
 function readiness(state) {
   const s = state || {};
   if (!s.onSubmitPage) return { ok: false, text: 'Это не страница подачи заявки — откройте форму брони' };
   if (!s.account || !s.account.loggedIn) return { ok: false, text: 'Кабинет не распознан — войдите на сайт и обновите страницу' };
-  return { ok: true, text: `Кабинет виден: ${s.account.fio}` };
+  return { ok: true, text: `Кабинет виден: ${accountLabel(s.account)}` };
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { accountFromFields, shortFio, isSubmitPage, readiness, SUBMIT_FORM_ID, SUBMIT_FIELD_MARKERS };
+  module.exports = { accountFromFields, accountLabel, isSubmitPage, readiness, SUBMIT_FORM_ID, SUBMIT_FIELD_MARKERS, parseHeader };
 }

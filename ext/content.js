@@ -24,6 +24,12 @@ function collectPageMarks() {
   };
 }
 
+// Шапка страницы: «Личный кабинет пользователя <код>» и ссылка «Выход». Единственный
+// признак входа, который сайт реально даёт — в саму форму он ФИО не подставляет.
+function collectHeader() {
+  return parseHeader(document.body ? document.body.innerText || '' : '');
+}
+
 // ——— Наблюдение за проверкой на робота (этап ext-2) ————————————————————————
 //
 // Токен виджет кладёт в скрытое поле, присваивая элементу свойство .value. MutationObserver
@@ -170,7 +176,7 @@ let lastReport = null;
 function deliverReport(report, booking) {
   const body = reportBody({
     outcome: report.outcome,
-    account: accountFromFields(collectFields()),
+    account: accountFromFields(collectFields(), collectHeader()),
     booking,
     now: Date.now(),
   });
@@ -222,7 +228,7 @@ function armShot(targetMs, count) {
 
 function readState() {
   const fields = collectFields();
-  const account = accountFromFields(fields);
+  const account = accountFromFields(fields, collectHeader());
   const onSubmitPage = isSubmitPage(location.href, collectPageMarks());
   const target = nextRegistrationMidnight();
   const booking = bookingDateFor(target);

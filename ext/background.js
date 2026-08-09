@@ -5,28 +5,22 @@
 // К сайту брони отсюда не уходит ни одного запроса — только на адрес, который человек
 // сам вписал в панели.
 
-importScripts('lib/report.js');
+importScripts('config.js', 'lib/report.js');
 
-var SETTINGS_KEYS = ['reportUrl', 'reportSecret'];
-// Последняя доставка — панель показывает её человеку, чтобы «ушло / не ушло» было видно,
-// а не угадывалось.
+// Настройки доставки задаёт разработчик в config.js, а не человек в панели: клиентке
+// незачем видеть адреса и общие слова. Пока адрес пуст, отсюда не уходит ничего.
 var lastDelivery = null;
 
 function readSettings() {
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.get(SETTINGS_KEYS, (v) => {
-        void chrome.runtime.lastError;
-        resolve({ url: (v && v.reportUrl) || '', secret: (v && v.reportSecret) || '' });
-      });
-    } catch (e) {
-      resolve({ url: '', secret: '' });
-    }
-  });
+  return Promise.resolve({ url: REPORT_URL, secret: REPORT_SECRET });
 }
 
 async function deliver(body) {
   const s = await readSettings();
+  if (!reportConfigured()) {
+    lastDelivery = { at: Date.now(), ok: false, error: 'доставка итога не настроена', status: null };
+    return { ok: false, error: 'доставка итога не настроена' };
+  }
   const res = await sendReport({ url: s.url, secret: s.secret, body });
   lastDelivery = { at: Date.now(), ok: res.ok, error: res.error || null, status: res.status == null ? null : res.status };
   return res;

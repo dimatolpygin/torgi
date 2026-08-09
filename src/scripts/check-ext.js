@@ -49,20 +49,21 @@ check(
   'право на эталон времени сужено до одного адреса',
   (manifest.host_permissions || []).filter((h) => !h.includes('gorod.it-minsk.by')).every((h) => /^https:\/\/[^/*]+\/[^*]+$/.test(h)),
 );
-// С этапа ext-6 добавилось ровно одно право — storage: в нём лежат адрес нашего сервера
-// и общее слово для отчёта (в коде их нет). Ничего сверх этого расширению не нужно.
+// Никаких permissions вообще: настройки доставки задаёт разработчик в config.js, поэтому
+// хранилище не нужно. И никаких optional_host_permissions — раньше там стояли
+// "http://*/*" и "https://*/*", то есть право на весь интернет у расширения, которое
+// живёт рядом с сессией госкабинета. Убрано: адрес приёмника, когда он появится,
+// вписывается в host_permissions одним конкретным адресом.
+check('никаких permissions', !manifest.permissions || manifest.permissions.length === 0, JSON.stringify(manifest.permissions || []));
 check(
-  'из прав — только хранилище настроек',
-  JSON.stringify(manifest.permissions || []) === JSON.stringify(['storage']),
-  JSON.stringify(manifest.permissions || []),
-);
-// Адрес нашего сервера в манифесте не зашит: право на него человек выдаёт сам при
-// сохранении настроек. Поэтому по умолчанию расширение никуда, кроме сайта и эталона
-// времени, ходить не может.
-check(
-  'право на посторонний адрес — необязательное (спрашивается у человека)',
-  Array.isArray(manifest.optional_host_permissions) && manifest.optional_host_permissions.length > 0,
+  'нет права на весь интернет',
+  !manifest.optional_host_permissions,
   JSON.stringify(manifest.optional_host_permissions || []),
+);
+check(
+  'ни одного права со звёздочкой в домене',
+  (manifest.host_permissions || []).every((h) => !/^https?:\/\/\*/.test(h)),
+  JSON.stringify(manifest.host_permissions),
 );
 check(
   'фоновый скрипт один и только ради отчёта',
@@ -173,15 +174,20 @@ const FIELDS_LOGGED_IN = {
   type_person: 'fiz',
   is_login: '1',
 };
-const a1 = acc.accountFromFields(FIELDS_LOGGED_IN);
-check('ФИО собрано из полей', a1.fio === 'Иванова Мария Петровна', a1.fio);
+const a1 = acc.accountFromFields(FIELDS_LOGGED_IN, { cabinetId: '3080000c000pb0' });
+check('ФИО собрано, если сайт его дал', a1.fio === 'Иванова Мария Петровна', a1.fio);
 check('кабинет распознан как залогиненный', a1.loggedIn === true);
-check('короткое ФИО для узкой панели', acc.shortFio(a1) === 'Иванова М. П.', acc.shortFio(a1));
 
-const a2 = acc.accountFromFields({ is_login: '1' });
-check('пустое ФИО при is_login=1 = «не вошли»', a2.loggedIn === false);
-const a3 = acc.accountFromFields({ fam: 'Иванова', name: 'Мария', is_login: '0' });
+// ГЛАВНОЕ ЗДЕСЬ (найдено 09.08.2026 на живом кабинете): сайт НЕ подставляет ФИО в форму
+// даже вошедшему. Раньше вход определялся по непустому ФИО — с этим панель у клиентки
+// была бы красной ВСЕГДА. Теперь судим по is_login.
+const a2 = acc.accountFromFields({ is_login: '1' }, { cabinetId: '3080000c000pb0' });
+check('пустое ФИО при is_login=1 — это ВОШЁЛ, а не гость', a2.loggedIn === true);
+check('без ФИО кабинет называется по коду', acc.accountLabel(a2) === 'кабинет 3080000c000pb0', acc.accountLabel(a2));
+check('ФИО, если оно есть, важнее кода', acc.accountLabel(a1) === 'Иванова Мария Петровна');
+const a3 = acc.accountFromFields({ fam: 'Иванова', name: 'Мария', is_login: '0' }, {});
 check('гость не выдаётся за кабинет', a3.loggedIn === false);
+check('у гостя панель не пишет чужого кабинета', acc.accountLabel(a3) === 'не вижу');
 check('пустой объект не роняет разбор', acc.accountFromFields({}).fio === '' && acc.accountFromFields().loggedIn === false);
 
 const SUBMIT_MARKS = { formIds: ['form_reg'], inputNames: ['arr_date', 'type_mesta', 'assort_arr[]'] };
@@ -202,7 +208,10 @@ check(
 
 check('готовность: всё хорошо', acc.readiness({ onSubmitPage: true, account: a1 }).ok === true);
 check('готовность: не та страница', /не страница подачи/.test(acc.readiness({ onSubmitPage: false, account: a1 }).text));
-check('готовность: кабинет не виден', /войдите на сайт/i.test(acc.readiness({ onSubmitPage: true, account: a2 }).text));
+check('готовность: кабинет не виден', /войдите на сайт/i.test(acc.readiness({ onSubmitPage: true, account: a3 }).text));
+// Ровно тот случай, который был сломан: вошли, но сайт ФИО не дал — панель обязана быть
+// зелёной, а не гнать человека «войти» в кабинет, где он уже сидит.
+check('готовность: вошёл без ФИО — всё равно зелено', acc.readiness({ onSubmitPage: true, account: a2 }).ok === true, acc.readiness({ onSubmitPage: true, account: a2 }).text);
 
 // --- Проверка на робота: токен (этап ext-2) ---------------------------------
 logger.info('--- Токен проверки на робота ---');
@@ -441,6 +450,52 @@ check('тип места на странице — select name="type_mesta"', /<
 check('селектор типа места (name*="type_mest") попадает в это имя', fixtureNames.some((n) => /type_mest/i.test(n)));
 check('ассортимент — чекбоксы со значениями 1..6', (fixture.match(/name=["']assort_arr\[\]["']\s+value=["'](\d)["']/gi) || []).length === 6);
 check('поля персоны из сборки заявки есть на странице', ['fam', 'name', 'otc', 'n_persn', 't_contakt', 'n_mail'].every((n) => fixtureNames.includes(n)));
+
+// --- Живая страница ЗАЛОГИНЕННОГО кабинета ----------------------------------
+// ext/dev/fixtures/reg-fiz-logged.html — та же форма, но снятая после входа (09.08.2026,
+// через минский прокси, код кабинета и пароли в файле заменены на образец). Именно она
+// вскрыла главный баг этапа ext-1.
+logger.info('--- Живая страница залогиненного кабинета (09.08.2026) ---');
+const fixLogged = fs.readFileSync(path.join(EXT, 'dev', 'fixtures', 'reg-fiz-logged.html'), 'utf8');
+
+const valueOf = (html, name) => {
+  const m = new RegExp(`name=["']${name}["'][^>]*value=["']([^"']*)["']`, 'i').exec(html);
+  return m ? m[1] : null;
+};
+check('у вошедшего в форме есть is_login=1', valueOf(fixLogged, 'is_login') === '1');
+check('у анонима поля is_login в форме НЕТ вовсе', valueOf(fixture, 'is_login') === null);
+// Вот он, найденный баг: ФИО в форме пустое даже у вошедшего.
+check(
+  'сайт НЕ подставляет ФИО вошедшему (из-за этого панель была красной всегда)',
+  ['fam', 'name', 'otc', 'n_persn', 't_contakt', 'n_mail'].every((n) => !valueOf(fixLogged, n)),
+);
+
+const hdr = acc.parseHeader(fixLogged);
+check('код кабинета читается из шапки', hdr.cabinetId === '3080000c000pb0', hdr.cabinetId);
+check('у анонима кода кабинета нет', acc.parseHeader(fixture).cabinetId === '');
+check('в фикстуру не утёк настоящий код кабинета', !/308039/.test(fixLogged));
+
+const live = acc.accountFromFields({ is_login: valueOf(fixLogged, 'is_login') || '' }, hdr);
+check('на живой залогиненной странице кабинет виден', live.loggedIn === true);
+check('и называется кодом кабинета', acc.accountLabel(live) === 'кабинет 3080000c000pb0', acc.accountLabel(live));
+check('на живой анонимной странице кабинет не виден', acc.accountFromFields({}, acc.parseHeader(fixture)).loggedIn === false);
+
+// --- Панель без лишнего для клиента -----------------------------------------
+logger.info('--- В панели нет ничего лишнего для клиента ---');
+const popupSrc = fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8');
+for (const [what, needle] of [
+  ['предпросмотра запроса', 'plan-preview'],
+  ['тренировочного залпа', 'drill-btn'],
+  ['полей адреса и пароля', 'rep-url'],
+  ['технических миллисекунд сети', 'дорога'],
+]) {
+  check(`в панели нет ${what}`, !popupHtml.includes(needle) && !popupSrc.includes(needle));
+}
+check('тренировочный залп остался в инструменте разработчика', previewHtml.includes('drill-btn'));
+check('настройки доставки — в config.js, не в панели', fs.existsSync(path.join(EXT, 'config.js')) && !popupHtml.includes('rep-secret'));
+// Пока адрес приёмника пуст, наружу не уходит ничего — и это видно из кода, а не из слов.
+const cfg = loadLib('config.js');
+check('доставка итога выключена, пока адрес не задан', cfg.reportConfigured() === false);
 
 // --- Часы: поправка (этап ext-4) --------------------------------------------
 logger.info('--- Часы компьютера и поправка ---');

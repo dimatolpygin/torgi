@@ -12,70 +12,26 @@
       <div id="target" class="target">&nbsp;</div>
     </div>
 
-    <div class="row">
-      <div class="label">Кабинет</div>
-      <div id="account" class="value">проверяю…</div>
-    </div>
-
-    <div class="row">
-      <div class="label">Дата брони</div>
-      <div id="booking" class="value">—</div>
-    </div>
-
-    <div class="row">
-      <div class="label">Проверка на робота</div>
-      <div id="token" class="value">—</div>
-    </div>
-
-    <div class="row">
-      <div class="label">Часы компьютера</div>
-      <div id="clock" class="value">меряю…</div>
-    </div>
-
+    <!-- Главное и единственное, что человек обязан прочитать: что делать прямо сейчас. -->
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
-    <div id="advice" class="advice"></div>
 
+    <!-- Что уйдёт в полночь — одной фразой, без внутренностей запроса. -->
     <div id="plan" class="plan">
-      <div class="mode">Режим: тренировка — ничего не отправляется</div>
       <div id="plan-text" class="plan-text">—</div>
-      <ul id="plan-problems" class="problems"></ul>
-      <details>
-        <summary>Показать, что уйдёт в 00:00</summary>
-        <pre id="plan-preview" class="preview"></pre>
-      </details>
-    </div>
-
-    <div id="drill" class="drill">
-      <button id="drill-btn" type="button">Тренировочный залп по ровной минуте</button>
-      <div id="drill-note" class="drill-note">
-        Проверяет точность выстрела вхолостую: ничего не отправляется. Не сворачивайте
-        вкладку — Chrome тормозит таймеры в скрытых вкладках.
-      </div>
-      <div id="drill-result" class="drill-result"></div>
     </div>
 
     <div id="outcome" class="plan outcome">
       <div class="label">Итог ночи</div>
       <div id="outcome-text" class="plan-text">—</div>
-      <div id="outcome-report" class="drill-note"></div>
     </div>
 
-    <details class="settings">
-      <summary>Куда слать итог в Telegram</summary>
-      <div class="settings-note">
-        Итог уходит на наш сервер, а он пересылает его в тот же Telegram, что и раньше.
-        Адрес и общее слово даёт разработчик; хранятся они только на этом компьютере.
-      </div>
-      <label class="field">Адрес сервера<input id="rep-url" type="url" placeholder="https://пример/ext/report" /></label>
-      <label class="field">Общее слово<input id="rep-secret" type="password" placeholder="длинная строка от разработчика" /></label>
-      <button id="rep-save" type="button">Сохранить</button>
-      <div id="rep-state" class="drill-note"></div>
-    </details>
+    <!-- Строка часов появляется, только если часы сбиты настолько, что это важно. -->
+    <div id="clock-warn" class="warn"></div>
+
+    <div id="account" class="foot"></div>
 
     <div class="foot">
-      Панель пока только смотрит и готовит заявку. Отправлять заявку она ещё не умеет —
-      на странице сайта у расширения нет ни одного запроса. Итог ночи она уже умеет
-      пересылать в Telegram.
+      Не закрывайте эту вкладку до полуночи.
     </div>
 
     <script src="lib/minsk.js"></script>
@@ -85,7 +41,7 @@
     <script src="lib/clock.js"></script>
     <script src="lib/shot.js"></script>
     <script src="lib/outcome.js"></script>
-    <script src="lib/report.js"></script>
+    <script src="config.js"></script>
     <script src="clocksync.js"></script>
     <script src="popup.js"></script>
   </body>
