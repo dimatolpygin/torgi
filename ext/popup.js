@@ -71,6 +71,52 @@ function renderOutcome(state) {
   box.classList.toggle('ok', !!o.ok);
 }
 
+// Что-то пошло не так. Показываем ОДНУ просьбу и ОДНУ кнопку — человеку не нужно
+// понимать причину, ему нужно знать, что делать. Разбираться будем по картинке.
+//
+// Блок появляется в трёх случаях: страница/кабинет не в порядке, проверка на робота
+// упёрлась, ночь закончилась неудачей. В остальное время его нет вовсе.
+function troubleReason(state) {
+  if (!state) return 'Расширение не видит страницу брони.';
+  if (!state.readiness.ok) return state.readiness.text + '.';
+  if (state.outcome && !state.outcome.ok && !state.outcome.drill) return 'Заявку не приняли.';
+  if (state.guard.advice.level === 'bad') return state.guard.advice.text + '.';
+  return null;
+}
+
+function renderTrouble(state) {
+  const box = $('trouble');
+  const reason = troubleReason(state);
+  if (!reason) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = '';
+  $('trouble-text').textContent = `${reason} Сфотографируйте это окно целиком и пришлите — так я пойму, что случилось.`;
+}
+
+var NL = String.fromCharCode(10);
+
+// Текст для пересылки. Пишем словами, без внутренностей: человек его увидит и должен
+// понимать, что именно отправляет. Токена, куки и пароля здесь нет.
+function troubleReport(state) {
+  const rows = [
+    `Время: ${new Date().toLocaleString('ru-RU')}`,
+    `До подачи: ${formatCountdown(target.ms - trueNow())}`,
+    `Ночь на: ${formatDateRu(target)}`,
+  ];
+  if (!state) {
+    rows.push('Страница брони не открыта или не отвечает.');
+    return rows.join(NL);
+  }
+  rows.push(`Кабинет: ${state.account && state.account.loggedIn ? accountLabel(state.account) : 'не виден'}`);
+  rows.push(`Проверка на робота: ${state.guard.hasToken ? 'пройдена' : 'не пройдена'}`);
+  rows.push(`Что показывает панель: ${state.readiness.ok ? state.guard.advice.text : state.readiness.text}`);
+  if (state.outcome) rows.push(`Итог: ${state.outcome.text}`);
+  if (state.shot) rows.push(`Выстрел: ${state.shot.text}`);
+  return rows.join(NL);
+}
+
 // Внизу мелким: в каком кабинете сидим. Нужно ровно для одного — не перепутать профиль
 // Chrome жены с профилем мужа.
 function renderAccount(state) {
@@ -102,6 +148,7 @@ function render(state) {
     setStatus('wait', 'Откройте в этой вкладке форму брони на gorod.it-minsk.by');
     renderPlan(null);
     renderOutcome(null);
+    renderTrouble(null);
     renderAccount(null);
     return;
   }
@@ -117,6 +164,7 @@ function render(state) {
 
   renderPlan(state.plan);
   renderOutcome(state);
+  renderTrouble(state);
   renderAccount(state);
 }
 
@@ -141,6 +189,15 @@ async function measureClock() {
 }
 
 async function main() {
+  $('copy-btn').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(troubleReport(lastState));
+      $('copy-done').textContent = 'Скопировано — вставьте в сообщение.';
+    } catch (e) {
+      $('copy-done').textContent = 'Не получилось скопировать — просто пришлите фото окна.';
+    }
+  });
+
   tick();
   setInterval(tick, 250);
   renderClock();

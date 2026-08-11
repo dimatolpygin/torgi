@@ -14,6 +14,12 @@ var TOKEN_TTL_MS = 5 * 60 * 1000;
 var TOKEN_WARN_MS = 60 * 1000;
 // Сколько ждать токен после загрузки страницы, прежде чем сказать «похоже, нужен клик».
 var CLICK_HINT_AFTER_MS = 10 * 1000;
+// Сколько ждать, прежде чем признать: проверка не проходит вообще. Ночь 11.08 показала
+// живьём, как это выглядит: Cloudflare пишет «Сбой проверки», токена нет и не будет,
+// а панель до этого твердила «нажмите галочку» — совет, который уже не помогал.
+var STUCK_AFTER_MS = 90 * 1000;
+// Обновлять страницу можно, пока до подачи далеко: перезагрузка сбрасывает и проверку.
+var RELOAD_SAFE_BEFORE_MS = 3 * 60 * 1000;
 
 // Чем закрыта форма — по тому, что видно на странице.
 function guardKindFromSources(sources) {
@@ -83,6 +89,17 @@ function guardAdvice(input) {
   if (!o.kind) return { level: 'wait', text: 'Проверки на робота на странице не видно — возможно, её сняли' };
 
   if (st.state === 'none') {
+    // Долго висит без токена — совет «нажмите галочку» уже бесполезен, нужен другой.
+    if (o.widgetSeen && o.pageAgeMs != null && o.pageAgeMs > STUCK_AFTER_MS) {
+      const farFromMidnight = o.targetMs == null || o.targetMs - now > RELOAD_SAFE_BEFORE_MS;
+      return {
+        level: 'bad',
+        stuck: true,
+        text: farFromMidnight
+          ? 'Проверка не проходит. Обновите страницу клавишей F5 и попробуйте ещё раз'
+          : 'Проверка не проходит. Страницу сейчас не обновляйте — сфотографируйте это окно и пришлите',
+      };
+    }
     if (o.widgetSeen && o.pageAgeMs != null && o.pageAgeMs > CLICK_HINT_AFTER_MS) {
       return { level: 'bad', text: 'Пройдите проверку в форме — похоже, нужно нажать галочку «Я не робот»' };
     }
@@ -104,6 +121,8 @@ if (typeof module !== 'undefined' && module.exports) {
     TOKEN_TTL_MS,
     TOKEN_WARN_MS,
     CLICK_HINT_AFTER_MS,
+    STUCK_AFTER_MS,
+    RELOAD_SAFE_BEFORE_MS,
     guardKindFromSources,
     tokenStatus,
     refreshWindow,

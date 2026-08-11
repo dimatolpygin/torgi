@@ -278,6 +278,14 @@ check(
 );
 check('истёкший токен — прямое указание пройти заново', /заново/.test(advice({ status: stExpired, now: midnight - 2 * 60000 }).text));
 check('всё хорошо — зелёный совет', advice({ status: stFresh, now: t3 + 1000 }).level === 'ok');
+
+// Ночь 11.08 живьём: Cloudflare написал «Сбой проверки», токена не было вовсе, а панель
+// продолжала советовать нажать галочку. Совет обязан меняться, когда он перестал работать.
+const stuckFar = advice({ status: stNone, now: midnight - 30 * 60 * 1000, pageAgeMs: 120000 });
+const stuckNear = advice({ status: stNone, now: midnight - 60 * 1000, pageAgeMs: 120000 });
+check('залипшая проверка признаётся залипшей, а не «нажмите галочку»', stuckFar.stuck === true && !/галочку/.test(stuckFar.text), stuckFar.text);
+check('пока до полуночи далеко — предлагаем обновить страницу', /F5/.test(stuckFar.text));
+check('за минуту до подачи обновлять страницу не советуем', !/F5/.test(stuckNear.text) && /пришлите/.test(stuckNear.text), stuckNear.text);
 check(
   'токен был до открытия панели — просим обновить на всякий случай',
   advice({ status: guard.tokenStatus({ token: 'abc', seenAt: t3, issuedKnown: false, now: t3 + 1000, targetMs: midnight }), now: t3 + 1000 }).level === 'ok',
@@ -691,6 +699,16 @@ check(
 );
 check('итог считается сразу после залпа и лежит в состоянии для панели', /report\.outcome = summarize\(/.test(contentAfterShot) && /outcome: lastShot/.test(contentAfterShot));
 check('панель показывает итог сама, без обновления страницы', fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8').includes('renderOutcome(state)'));
+
+// Блок «что-то не так»: одна просьба, одна кнопка, и только когда есть о чём просить.
+const popupJs = fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8');
+check('в панели есть блок «что-то не так»', popupHtml.includes('id="trouble"') && popupHtml.includes('id="copy-btn"'));
+check('блок появляется только по делу', /if \(!reason\) \{\s*box\.style\.display = 'none';/.test(popupJs));
+check('человека просят прислать картинку', /Сфотографируйте это окно/.test(popupJs));
+check('кнопка кладёт текст в буфер обмена', /navigator\.clipboard\.writeText\(troubleReport/.test(popupJs));
+// В пересылаемом тексте не должно быть ничего, чего человек не должен отдавать.
+const reportFn = popupJs.slice(popupJs.indexOf('function troubleReport'), popupJs.indexOf('// Внизу мелким'));
+check('в тексте для пересылки нет ни токена, ни куки, ни пароля', !/token(?!.*hasToken)|cookie|pass/i.test(reportFn.replace(/hasToken/g, '')), 'только слова о состоянии');
 
 // Секрета в репозитории быть не должно — ни в расширении, ни в коде бота.
 const repoFiles = ['ext/background.js', 'ext/popup.js', 'ext/lib/report.js', 'ext/content.js', 'src/ext-report.js', 'src/config.js'];

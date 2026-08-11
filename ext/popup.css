@@ -270,3 +270,34 @@ body {
   border-radius: 6px;
   cursor: pointer;
 }
+
+/* Блок «что-то не так». Показывается редко и только по делу, поэтому может позволить
+   себе быть заметным. Кнопка одна: скопировать то, что человек перешлёт разработчику. */
+.trouble {
+  display: none;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid #f0b6b6;
+  border-radius: 8px;
+  background: #fff6f6;
+}
+.trouble-text {
+  font-size: 13px;
+  line-height: 1.35;
+  color: #8a1f1f;
+}
+.copy-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  font-size: 13px;
+  border: 1px solid #d9a0a0;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.copy-done {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
