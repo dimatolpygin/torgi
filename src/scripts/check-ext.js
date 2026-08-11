@@ -706,6 +706,17 @@ check('в панели есть блок «что-то не так»', popupHtml
 check('блок появляется только по делу', /if \(!reason\) \{\s*box\.style\.display = 'none';/.test(popupJs));
 check('человека просят прислать картинку', /Сфотографируйте это окно/.test(popupJs));
 check('кнопка кладёт текст в буфер обмена', /navigator\.clipboard\.writeText\(troubleReport/.test(popupJs));
+
+// Ловушка, на которую я уже наступил: блок скрыт в стилях через display:none, а код
+// показывает его присваиванием style.display = '' — пустая строка откатывает к стилю,
+// то есть блок остаётся невидимым. Так «Итог ночи» с этапа ext-6 не показался бы ни разу.
+check('панель показывает блоки явным значением, а не пустой строкой', !/style\.display = '';/.test(popupJs), "ни одного пустого display");
+const popupCss = fs.readFileSync(path.join(EXT, 'popup.css'), 'utf8');
+for (const cls of ['outcome', 'trouble']) {
+  const hidden = new RegExp(`\.${cls}\s*\{[^}]*display:\s*none`).test(popupCss);
+  const shown = new RegExp(`\$\('${cls}'\)`).test(popupJs) || popupJs.includes(`'${cls}'`);
+  check(`скрытый в стилях блок «${cls}» показывается явно`, !hidden || /style\.display = 'block';/.test(popupJs), `скрыт в css: ${hidden}, показан явно: ${shown}`);
+}
 // В пересылаемом тексте не должно быть ничего, чего человек не должен отдавать.
 const reportFn = popupJs.slice(popupJs.indexOf('function troubleReport'), popupJs.indexOf('// Внизу мелким'));
 check('в тексте для пересылки нет ни токена, ни куки, ни пароля', !/token(?!.*hasToken)|cookie|pass/i.test(reportFn.replace(/hasToken/g, '')), 'только слова о состоянии');

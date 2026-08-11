@@ -42,7 +42,7 @@ function renderClock() {
     el.style.display = 'none';
     return;
   }
-  el.style.display = '';
+  el.style.display = 'block';
   const off = Math.round(clockSync.offsetMs);
   el.textContent = `Часы компьютера ${off > 0 ? 'отстают' : 'спешат'} на ${(Math.abs(off) / 1000).toFixed(1)} с. Подача всё равно уйдёт вовремя, но часы лучше синхронизировать.`;
 }
@@ -54,7 +54,7 @@ function renderPlan(plan) {
     box.style.display = 'none';
     return;
   }
-  box.style.display = '';
+  box.style.display = 'block';
   $('plan-text').textContent = plan.text;
 }
 
@@ -65,7 +65,7 @@ function renderOutcome(state) {
     box.style.display = 'none';
     return;
   }
-  box.style.display = '';
+  box.style.display = 'block';
   $('outcome-text').textContent = o.text;
   box.classList.toggle('bad', !o.ok);
   box.classList.toggle('ok', !!o.ok);
@@ -91,7 +91,7 @@ function renderTrouble(state) {
     box.style.display = 'none';
     return;
   }
-  box.style.display = '';
+  box.style.display = 'block';
   $('trouble-text').textContent = `${reason} Сфотографируйте это окно целиком и пришлите — так я пойму, что случилось.`;
 }
 
