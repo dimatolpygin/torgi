@@ -33,7 +33,32 @@ async function deliver(body) {
 // подтверждается при повторном запросе.
 var shotClaims = new Map(); // '<момент полуночи>' → id вкладки
 
+// Значок на кнопке расширения. Панель всплывающая — к полуночи она закрыта, и если сайт
+// потребует проверку прямо на отправке, докричаться до человека больше нечем. Красный «!»
+// на значке видно в любой вкладке. Права на уведомления для этого не нужны: значок есть
+// у любого расширения с кнопкой, и просить за него ничего не надо.
+var BADGES = {
+  alert: { text: '!', color: '#c62828' },
+  ok: { text: '✓', color: '#2e7d32' },
+  clear: { text: '', color: '#000000' },
+};
+
+function setBadge(kind) {
+  const b = BADGES[kind] || BADGES.clear;
+  try {
+    chrome.action.setBadgeText({ text: b.text });
+    chrome.action.setBadgeBackgroundColor({ color: b.color });
+  } catch (e) {
+    /* значок — вежливость, а не механика ночи: его отсутствие ничего не ломает */
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'SET_BADGE') {
+    setBadge(msg.kind);
+    sendResponse({ ok: true });
+    return false;
+  }
   if (msg && msg.type === 'CLAIM_SHOT') {
     const tabId = _sender && _sender.tab && _sender.tab.id != null ? _sender.tab.id : -1;
     const d = decideClaim(shotClaims, msg.targetMs, tabId);

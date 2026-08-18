@@ -49,6 +49,18 @@ function submitOnce(input) {
     timer = setTimeout(() => ctrl.abort(), o.timeoutMs || SUBMIT_TIMEOUT_MS);
   }
 
+  // Заголовки, по которым видно защиту, а не сайт: `cf-mitigated` Cloudflare ставит
+  // сам, когда придержал запрос. Бот собирает ровно этот же набор с 04.08 (коммит
+  // 9cb4426) — тогда в логе был один `code=500` и восстанавливать причину было нечем.
+  const pickHeader = (h, n) => {
+    try {
+      return h && h.get ? h.get(n) || '' : '';
+    } catch (e) {
+      return '';
+    }
+  };
+  const defenceHeaders = (h) => ({ 'cf-mitigated': pickHeader(h, 'cf-mitigated'), 'cf-ray': pickHeader(h, 'cf-ray'), server: pickHeader(h, 'server') });
+
   return doFetch(o.url, {
     method: 'POST',
     // Кука кабинета обязана уехать вместе с запросом — иначе сервер не узнает человека.
@@ -61,7 +73,7 @@ function submitOnce(input) {
     body: o.body,
     signal,
   })
-    .then((res) => res.text().then((text) => ({ status: res.status, text, tookMs: now() - startedAt })))
+    .then((res) => res.text().then((text) => ({ status: res.status, text, headers: defenceHeaders(res.headers), tookMs: now() - startedAt })))
     .catch((e) => ({
       // Ответа не будет — но это не «отказ сайта», а обрыв, и назвать это надо честно.
       status: null,

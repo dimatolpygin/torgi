@@ -623,7 +623,7 @@ const rejMute = outcome.readAnswer(answered('500'));
 check('молчаливый отказ не выдумывает причину', /причину не назвал/.test(rejMute.reason), rejMute.reason);
 const rl = outcome.readAnswer({ ok: true, result: { status: 429, text: '' } });
 check('429 распознан как ограничение частоты', rl.kind === 'ratelimit' && /частот/.test(rl.reason));
-const notJson = outcome.readAnswer({ ok: true, result: { status: 200, text: '<html>Проверка на робота</html>' } });
+const notJson = outcome.readAnswer({ ok: true, result: { status: 200, text: '<html><body>Ошибка на сервере</body></html>' } });
 check('не-JSON распознан как страница, а не ответ', notJson.kind === 'notjson' && /страницу/.test(notJson.reason));
 check('упавшая отправка — это не отказ сайта', outcome.readAnswer({ ok: false, error: 'сокет отвалился' }).kind === 'network');
 check('тренировка видна как тренировка', outcome.readAnswer({ ok: true, result: { dryRun: true } }).kind === 'drill');
@@ -837,8 +837,8 @@ check('ответ сервера возвращается как есть', okRe
 check('принятая заявка опознана итогом', outcome.readAnswer(okRes).accepted === true);
 
 // Ночь 04.08: вместо JSON пришла страница проверки. Так это и должно называться.
-const challenge = await send.submitOnce({ url: '/x/', body: 'a=1', deps: { fetch: () => Promise.resolve({ status: 403, text: () => Promise.resolve('<html>Just a moment…</html>') }) } });
-check('страница челленджа не выдаётся за отказ по полям', outcome.readAnswer(challenge).kind === 'notjson', outcome.readAnswer(challenge).reason);
+const challenge = await send.submitOnce({ url: '/x/', body: 'a=1', deps: { fetch: () => Promise.resolve({ status: 403, text: () => Promise.resolve('<html>Just a moment…</html>'), headers: { get: () => '' } }) } });
+check('страница челленджа не выдаётся за отказ по полям', outcome.readAnswer(challenge).kind === 'challenge', outcome.readAnswer(challenge).reason);
 
 // Интернет отвалился. Это не «сайт отклонил» — разница для человека принципиальная.
 const dead = await send.submitOnce({ url: '/x/', body: 'a=1', deps: { fetch: () => Promise.reject(new Error('Failed to fetch')) } });
@@ -909,7 +909,246 @@ check('без токена заявка не уходит вовсе', /if \(!to
 check('страница взводит таймер сама — панель к полуночи закрыта', /setInterval\(maybeArm, 1000\)/.test(contentLive));
 check('таймер взводится заранее, а не в последнюю секунду', /ARM_LEAD_MS = 15 \* 60 \* 1000/.test(contentLive));
 check('право на подачу спрашивается до выстрела', contentLive.indexOf('claimShot(targetMs)') < contentLive.indexOf('shootAt({'));
-check('повторных попыток подачи нет', !/подать ещё раз|retry|attempt\s*\+\+/i.test(contentLive));
+// Повторов вслепую нет по-прежнему. Второй шанс (18.08) — не повтор: он открывается
+// только когда сайт потребовал проверку, и стреляет только по действию человека.
+check('повторов вслепую нет — ни цикла, ни счётчика попыток', !/подать ещё раз|retry|attempt\s*\+\+/i.test(contentLive));
+
+// --- Проверка на робота В МОМЕНТ ОТПРАВКИ (18.08.2026) -----------------------
+// Выяснилось живьём: Cloudflare просит проверку не только при открытии формы, но и на
+// самой отправке. Значит, ночь проигрывается не отказом сайта, а тем, что заявка до него
+// не дошла — и человек, сидящий перед этой же вкладкой, ещё может её спасти.
+logger.info('--- Проверка на робота в момент отправки ---');
+
+const cfHeader = { ok: true, result: { status: 200, text: '{"code":"500"}', headers: { 'cf-mitigated': 'challenge' } } };
+check('челлендж узнаётся по заголовку Cloudflare, даже если тело похоже на ответ', outcome.readAnswer(cfHeader).kind === 'challenge');
+const cf403 = { ok: true, result: { status: 403, text: '' } };
+check('пустой 403 — тоже челлендж, а не молчание сайта', outcome.readAnswer(cf403).kind === 'challenge');
+const cfBody = { ok: true, result: { status: 200, text: '<html><script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></html>' } };
+check('страница проверки узнаётся по телу', outcome.readAnswer(cfBody).kind === 'challenge');
+const realReject = { ok: true, result: { status: 200, text: '{"code":"500","arr_date":"no_date"}' } };
+check('настоящий отказ сайта челленджем не объявляется', outcome.readAnswer(realReject).kind === 'rejected', outcome.readAnswer(realReject).reason);
+const realOk = { ok: true, result: { status: 200, text: '{"code":"201"}', headers: { 'cf-mitigated': '' } } };
+check('принятая заявка не путается с проверкой', outcome.readAnswer(realOk).accepted === true);
+
+const sumChal = outcome.summarize({ results: [cfHeader, cfHeader], booking: BOOKING });
+check('оба места помечены как «ещё можно подать»', sumChal.needsHuman.length === 2 && sumChal.challenged === true);
+check('итог зовёт пройти проверку, а не сообщает о поражении', /пройдите проверку/i.test(sumChal.text), sumChal.text);
+const sumMix = outcome.summarize({ results: [answered('201'), cfHeader], booking: BOOKING });
+check('доподать надо только непрошедшее место', sumMix.needsHuman.length === 1 && sumMix.needsHuman[0] === 1, JSON.stringify(sumMix.needsHuman));
+check('уже принятое место видно и в этом случае', /Принято 1 из 2/.test(sumMix.text), sumMix.text);
+const sumSkip = outcome.summarize({ results: [{ skipped: 'проверка на робота не пройдена — заявка не отправлена' }], booking: BOOKING });
+check('непройденная проверка тоже даёт второй шанс', sumSkip.needsHuman.length === 1 && sumSkip.challenged === false);
+const sumPlainFail = outcome.summarize({ results: [answered('500'), answered('500')], booking: BOOKING });
+check('обычный отказ второго шанса не открывает', sumPlainFail.needsHuman.length === 0, JSON.stringify(sumPlainFail.needsHuman));
+check('в отчёт наружу попадает сам факт проверки', outcome.reportBody({ outcome: sumChal, booking: BOOKING }).challenged === true);
+
+// Порядок разбора: сайт умеет ругаться на САМО поле токена, и это честный JSON-отказ,
+// а не страница проверки. Если перепутать — второй шанс откроется не там, где надо.
+const tokenReject = { ok: true, result: { status: 200, text: '{"code":"500","cf-turnstile-response":"empty"}' } };
+check('отказ по полю токена читается как отказ, а не как страница', outcome.readAnswer(tokenReject).kind === 'rejected', outcome.readAnswer(tokenReject).reason);
+check('но второй шанс он всё равно открывает', outcome.readAnswer(tokenReject).needsHuman === true);
+const plainReject = { ok: true, result: { status: 200, text: '{"code":"500","arr_date":"no_date"}' } };
+check('отказ по дате второго шанса не открывает', !plainReject.needsHuman && outcome.readAnswer(plainReject).needsHuman !== true);
+
+// Заголовки защиты обязаны доезжать до разбора — иначе `cf-mitigated` некому прочитать.
+const withHeaders = await send.submitOnce({
+  url: '/x/',
+  body: 'a=1',
+  deps: { fetch: () => Promise.resolve({ status: 403, text: () => Promise.resolve(''), headers: { get: (n) => (n === 'cf-mitigated' ? 'challenge' : '') } }) },
+});
+check('заголовки защиты доезжают до разбора', withHeaders.headers['cf-mitigated'] === 'challenge', JSON.stringify(withHeaders.headers));
+check('челлендж по живому ответу опознан', outcome.readAnswer(withHeaders).kind === 'challenge');
+
+// Рамки второго шанса. Он обязан остаться человеческим действием, а не долбёжкой:
+// именно за долбёжку сайт отвечал `429` в ночь 07.08.
+check('второй шанс тратится ровно один раз', /secondChance\.used = true;/.test(contentLive) && (contentLive.match(/secondChance\.used = true/g) || []).length === 1);
+check('второй шанс не откроется дважды', /if \(!need\.length \|\| secondChance\.used\)/.test(contentLive));
+check('без пройденной проверки второй шанс не стреляет', /if \(!guardState\.token\) return Promise\.resolve\(\{ ok: false/.test(contentLive));
+check('второй шанс закрывается по времени, а не висит до утра', /SECOND_CHANCE_WINDOW_MS = 10 \* 60 \* 1000/.test(contentLive) && /Date\.now\(\) - secondChance\.since > SECOND_CHANCE_WINDOW_MS/.test(contentLive));
+check('сам собой второй шанс срабатывает только на НОВЫЙ токен от человека', /guardState\.renewals <= secondChance\.renewalsAtShot\) return;/.test(contentLive));
+check('доподаём только те места, что не прошли', /secondChance\.indexes\.map\(\(i\) =>/.test(contentLive));
+check('после доподачи итог пересчитывается и уходит заново', /function refreshOutcome\(\)/.test(contentLive) && /deliverReport\(lastShot, secondChance\.booking\)/.test(contentLive));
+check('расширение по-прежнему не проходит проверку за человека', !/turnstile\.(render|execute)|grecaptcha|\.click\(\)/.test(contentLive));
+
+// Значок на кнопке — единственный способ докричаться при закрытой панели. Прав на
+// уведомления при этом не появилось: значок доступен любому расширению с кнопкой.
+const bgLive = fs.readFileSync(path.join(EXT, 'background.js'), 'utf8');
+check('значок зовёт человека, когда панель закрыта', /chrome\.action\.setBadgeText/.test(bgLive));
+check('ради значка не попросили ни одного нового права', !Object.prototype.hasOwnProperty.call(manifest, 'permissions'));
+
+// Панель: одна кнопка, и та лишь дублирует то, что страница сделает сама.
+const popupLive = fs.readFileSync(path.join(EXT, 'popup.js'), 'utf8');
+check('панель показывает просьбу пройти проверку', /renderSecond/.test(popupLive) && /Сайт просит проверку/.test(popupLive));
+check('кнопка второго шанса ничего не отправляет сама', !/fetch\s*\(/.test(popupLive.slice(popupLive.indexOf("$('second-btn')"), popupLive.indexOf("$('copy-btn')"))));
+check('панель не зовёт присылать фото, пока дело можно поправить', /if \(state\.secondChance && state\.secondChance\.waiting\) return null;/.test(popupLive));
+for (const [what, id] of [['просьбы', 'second-text'], ['кнопки', 'second-btn']]) {
+  check(`в панели есть блок ${what}`, popupHtml.includes(`id="${id}"`));
+}
+
+// --- Ночь целиком, без сайта и без браузера ----------------------------------
+// Самый дорогой участок кода — тот, что работает ровно один раз в сутки, в полночь, и
+// переспросить его нельзя. Поэтому прогоняем его здесь целиком: настоящий content.js со
+// всеми своими библиотеками, поддельный DOM вместо страницы и подставной ответ вместо
+// сайта. Проверяем то, что иначе выяснилось бы только живой ночью: сайт ответил
+// проверкой на робота — расширение открыло второй шанс, человек прошёл проверку —
+// заявка ушла заново и итог стал верным.
+logger.info('--- Ночь целиком: челлендж, второй шанс, доподача ---');
+
+function makeNight() {
+  const tokenInput = { name: 'cf-turnstile-response', value: '' };
+  const dom = {
+    'input[name], select[name], textarea[name]': [{ name: 'type_person', value: 'fiz' }, { name: 'is_login', value: '1' }, tokenInput],
+    'input[name], select[name]': [{ name: 'arr_date' }, { name: 'type_mesta' }, { name: 'assort_arr[]' }],
+    'input[name]': [tokenInput],
+    form: [{ id: 'form_reg' }],
+    'script[src]': [],
+    'iframe[src]': [{ src: 'https://challenges.cloudflare.com/turnstile/v0/api.js' }],
+    '[class]': [],
+    'input[name="cf-turnstile-response"]': tokenInput,
+  };
+  const timers = [];
+  const sent = [];
+  let fetchImpl = () => Promise.reject(new Error('запрос не ожидался'));
+  const messages = [];
+
+  const sandbox = {
+    console,
+    Date,
+    JSON,
+    Math,
+    Promise,
+    Number,
+    String,
+    Object,
+    Array,
+    Boolean,
+    RegExp,
+    Error,
+    Intl,
+    URLSearchParams,
+    AbortController,
+    isNaN,
+    parseInt,
+    encodeURIComponent,
+    decodeURIComponent,
+    setTimeout,
+    clearTimeout,
+    clearInterval,
+    setInterval: (fn, ms) => {
+      const id = setInterval(fn, ms);
+      timers.push(id);
+      return id;
+    },
+    fetch: (url, opts) => {
+      sent.push({ url, opts });
+      return fetchImpl(url, opts);
+    },
+    location: { href: 'https://gorod.it-minsk.by/rinki/minsk/reg/fiz/' },
+    MutationObserver: class {
+      observe() {}
+    },
+    document: {
+      body: { innerText: 'Личный кабинет пользователя 3080000c000pb0 Выход' },
+      documentElement: {},
+      querySelectorAll: (sel) => (Array.isArray(dom[sel]) ? dom[sel] : []),
+      querySelector: (sel) => (dom[sel] === undefined ? null : Array.isArray(dom[sel]) ? dom[sel][0] || null : dom[sel]),
+    },
+    chrome: {
+      runtime: {
+        lastError: null,
+        sendMessage: (msg, cb) => {
+          messages.push(msg);
+          if (cb) cb(msg.type === 'CLAIM_SHOT' ? { ok: true, granted: true } : { ok: true });
+        },
+        onMessage: { addListener: () => {} },
+      },
+    },
+  };
+
+  // Порядок файлов — тот же, что в манифесте: Chrome кладёт их в одну область видимости,
+  // и здесь она тоже одна. Значит, проверяется в том числе и сам порядок подключения.
+  const files = (manifest.content_scripts[0].js || []).map((rel) => fs.readFileSync(path.join(EXT, rel), 'utf8'));
+  // content.js объявляет своё состояние через const/let: в vm они живут в лексической
+  // области скрипта и на объекте песочницы не появляются. Достаём их явным хвостом.
+  const tail = '\n;globalThis.__night = { guardState, secondChance, armShot, shot: () => lastShot };\n';
+  vm.runInNewContext(files.join('\n;\n') + tail, sandbox, { filename: 'content-scripts.js' });
+
+  return {
+    sandbox,
+    tokenInput,
+    sent,
+    messages,
+    stop: () => timers.forEach((t) => clearInterval(t)),
+    setFetch: (fn) => {
+      fetchImpl = fn;
+    },
+  };
+}
+
+const night = makeNight();
+const ctx = night.sandbox.__night;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Человек прошёл проверку до полуночи — токен в форме есть.
+night.tokenInput.value = 'TOKEN-BEFORE-MIDNIGHT';
+await wait(400);
+check('расширение увидело пройденную проверку', ctx.guardState.token === 'TOKEN-BEFORE-MIDNIGHT', ctx.guardState.token);
+
+// Полночь. Сайт отвечает не заявкой, а проверкой на робота — ровно то, что случилось 18.08.
+night.setFetch(() =>
+  Promise.resolve({
+    status: 403,
+    text: () => Promise.resolve('<html><head><title>Just a moment...</title></head></html>'),
+    headers: { get: (n) => (n === 'cf-mitigated' ? 'challenge' : '') },
+  }),
+);
+ctx.armShot(Date.now() + 150, 2);
+await wait(900);
+
+check('в полночь ушли обе заявки', night.sent.length === 2, `запросов ${night.sent.length}`);
+check('заявка ушла с токеном, добытым человеком', String(night.sent[0].opts.body).includes('TOKEN-BEFORE-MIDNIGHT'));
+check('ответ сайта опознан как проверка, а не как отказ', ctx.shot().outcome.challenged === true, ctx.shot().outcome.text);
+check('второй шанс открыт на оба места', ctx.secondChance.waiting === true && ctx.secondChance.indexes.length === 2);
+check('значок позвал человека', night.messages.some((m) => m.type === 'SET_BADGE' && m.kind === 'alert'));
+check('итог зовёт пройти проверку', /Пройдите проверку/.test(ctx.shot().outcome.text), ctx.shot().outcome.text);
+
+// Пока человек не пошевелился — ни одного лишнего запроса. Это и есть «не долбим сайт».
+await wait(700);
+check('без человека расширение молчит', night.sent.length === 2, `запросов ${night.sent.length}`);
+
+// Человек прошёл проверку заново: виджет выдал НОВЫЙ токен. Теперь сайт принимает.
+night.setFetch(() => Promise.resolve({ status: 200, text: () => Promise.resolve('{"code":"201"}'), headers: { get: () => '' } }));
+night.tokenInput.value = 'TOKEN-SECOND-CHANCE';
+await wait(1200);
+
+check('доподача ушла сама, без единого нажатия', night.sent.length === 4, `запросов ${night.sent.length}`);
+check('доподача несёт новый токен', String(night.sent[3].opts.body).includes('TOKEN-SECOND-CHANCE'));
+check('итог пересчитан: места взяты', ctx.shot().outcome.ok === true && ctx.shot().outcome.acceptedCount === 2, ctx.shot().outcome.text);
+check('в Telegram ушёл исправленный итог', night.messages.filter((m) => m.type === 'SEND_REPORT').length === 2);
+check('значок сменился на «получилось»', night.messages.filter((m) => m.type === 'SET_BADGE').pop().kind === 'ok');
+
+// Третьего шанса нет: ещё один новый токен ничего не отправляет.
+night.tokenInput.value = 'TOKEN-THIRD';
+await wait(900);
+check('третьего шанса не бывает', night.sent.length === 4, `запросов ${night.sent.length}`);
+night.stop();
+
+// Та же ночь, но человек к клавиатуре не подошёл: окно закрывается само и молча.
+const night2 = makeNight();
+night2.setFetch(() =>
+  Promise.resolve({ status: 403, text: () => Promise.resolve(''), headers: { get: (n) => (n === 'cf-mitigated' ? 'challenge' : '') } }),
+);
+night2.tokenInput.value = 'TOKEN-X';
+await wait(400);
+night2.sandbox.__night.armShot(Date.now() + 150, 2);
+await wait(900);
+check('без человека второй шанс просто ждёт', night2.sandbox.__night.secondChance.waiting === true && night2.sent.length === 2);
+// Окно второго шанса — 10 минут; отматываем его, вместо того чтобы ждать вживую.
+night2.sandbox.__night.secondChance.since -= 11 * 60 * 1000;
+await wait(700);
+check('через 10 минут второй шанс закрывается сам', night2.sandbox.__night.secondChance.waiting === false);
+check('и всё равно ни одного лишнего запроса', night2.sent.length === 2, `запросов ${night2.sent.length}`);
+night2.stop();
 
 // --- Итог -------------------------------------------------------------------
 if (failed) {

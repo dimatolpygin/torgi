@@ -71,6 +71,25 @@ function renderOutcome(state) {
   box.classList.toggle('ok', !!o.ok);
 }
 
+// Второй шанс: сайт попросил проверку «я не робот» прямо в момент отправки (так он повёл
+// себя 18.08.2026). Это не поломка — это единственный случай, когда человек ещё может
+// спасти ночь руками, поэтому блок зовёт к действию, а не просит прислать фото.
+function renderSecond(state) {
+  const box = $('second');
+  const sc = state && state.secondChance;
+  if (!sc || (!sc.waiting && !sc.firedAt)) {
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = 'block';
+  $('second-text').textContent = sc.text || 'Сайт просит проверку «я не робот».';
+  // Пока ждём человека — кнопка есть. После отправки она бессмысленна: шанс один.
+  $('second-btn').style.display = sc.waiting ? 'block' : 'none';
+  $('second-note').textContent = sc.waiting
+    ? 'Пройдите проверку на странице — заявка уйдёт сама. Кнопка нужна, только если этого не случилось.'
+    : '';
+}
+
 // Что-то пошло не так. Показываем ОДНУ просьбу и ОДНУ кнопку — человеку не нужно
 // понимать причину, ему нужно знать, что делать. Разбираться будем по картинке.
 //
@@ -79,6 +98,8 @@ function renderOutcome(state) {
 function troubleReason(state) {
   if (!state) return 'Расширение не видит страницу брони.';
   if (!state.readiness.ok) return state.readiness.text + '.';
+  // Пока второй шанс жив, беды нет — есть дело. Блок «пришлите фото» тут только мешал бы.
+  if (state.secondChance && state.secondChance.waiting) return null;
   if (state.outcome && !state.outcome.ok && !state.outcome.drill) return 'Заявку не приняли.';
   if (state.guard.advice.level === 'bad') return state.guard.advice.text + '.';
   return null;
@@ -112,6 +133,9 @@ function troubleReport(state) {
   rows.push(`Кабинет: ${state.account && state.account.loggedIn ? accountLabel(state.account) : 'не виден'}`);
   rows.push(`Проверка на робота: ${state.guard.hasToken ? 'пройдена' : 'не пройдена'}`);
   rows.push(`Что показывает панель: ${state.readiness.ok ? state.guard.advice.text : state.readiness.text}`);
+  if (state.secondChance && (state.secondChance.waiting || state.secondChance.firedAt)) {
+    rows.push(`Проверка при отправке: ${state.secondChance.waiting ? 'ждём, пока пройдёте' : 'заявка отправлена заново'}`);
+  }
   if (state.outcome) rows.push(`Итог: ${state.outcome.text}`);
   if (state.shot) rows.push(`Выстрел: ${state.shot.text}`);
   return rows.join(NL);
@@ -146,6 +170,7 @@ function render(state) {
 
   if (!state) {
     setStatus('wait', 'Откройте в этой вкладке форму брони на gorod.it-minsk.by');
+    renderSecond(null);
     renderPlan(null);
     renderOutcome(null);
     renderTrouble(null);
@@ -162,6 +187,13 @@ function render(state) {
     setStatus(a.level === 'ok' ? 'ok' : a.level === 'bad' ? 'bad' : 'wait', a.text);
   }
 
+  // Проверка при отправке перебивает всё: это единственная минута ночи, когда от
+  // человека что-то зависит, и он должен прочитать именно это.
+  if (state.secondChance && state.secondChance.waiting) {
+    setStatus('bad', 'Сайт просит проверку «я не робот» — пройдите её на странице');
+  }
+
+  renderSecond(state);
   renderPlan(state.plan);
   renderOutcome(state);
   renderTrouble(state);
@@ -189,6 +221,14 @@ async function measureClock() {
 }
 
 async function main() {
+  // Кнопка второго шанса. Ничего не решает сама: она лишь просит страницу отправить то,
+  // что та и так отправит, как только увидит пройденную проверку.
+  $('second-btn').addEventListener('click', () => {
+    $('second-note').textContent = 'Отправляю…';
+    if (tabId == null) return;
+    chrome.tabs.sendMessage(tabId, { type: 'SECOND_CHANCE' }, () => void chrome.runtime.lastError);
+  });
+
   $('copy-btn').addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(troubleReport(lastState));

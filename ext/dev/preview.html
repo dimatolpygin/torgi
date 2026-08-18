@@ -38,6 +38,7 @@
         <option value="done-ok">итог ночи: приняты обе заявки</option>
         <option value="done-part">итог ночи: принята одна из двух</option>
         <option value="done-fail">итог ночи: отказ сайта</option>
+        <option value="done-challenge">сайт попросил проверку в момент отправки</option>
       </select>
     </div>
 
@@ -50,6 +51,15 @@
 
     <!-- Главное и единственное, что человек обязан прочитать: что делать прямо сейчас. -->
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
+
+    <!-- Появляется, только если сайт попросил проверку в момент отправки. Единственная
+         кнопка панели, которая что-то отправляет, — и та лишь дублирует то, что
+         расширение сделает само, как только человек пройдёт проверку. -->
+    <div id="second" class="second">
+      <div id="second-text" class="second-text">—</div>
+      <button id="second-btn" class="second-btn" type="button">Отправить заявку сейчас</button>
+      <div id="second-note" class="second-note"></div>
+    </div>
 
     <!-- Что уйдёт в полночь — одной фразой, без внутренностей запроса. -->
     <div id="plan" class="plan">
@@ -94,6 +104,9 @@
       // чтобы открытие превью не лезло в сеть. Отдаём правдоподобный результат.
       window.syncClock = async () => ({ ok: true, offsetMs: 137, rttMs: 24, spreadMs: 9, samples: 5, used: 3, source: 'Cloudflare (предпросмотр)', at: Date.now() });
 
+      // Нажимали ли в предпросмотре кнопку второго шанса.
+      let previewSecondFired = false;
+
       // Последний тренировочный залп — механика настоящая, отправка заглушена.
       let previewShot = null;
 
@@ -102,7 +115,9 @@
       function previewOutcome(scenario, booking) {
         const good = { ok: true, result: { status: 200, text: JSON.stringify({ code: '201' }) } };
         const bad = { ok: true, result: { status: 200, text: JSON.stringify({ code: '500' }) } };
-        const sets = { 'done-ok': [good, good], 'done-part': [good, bad], 'done-fail': [bad, bad] };
+        // Так выглядит ответ Cloudflare на саму отправку: страница вместо JSON.
+        const chal = { ok: true, result: { status: 403, text: '<html><head><title>Just a moment...</title></head></html>', headers: { 'cf-mitigated': 'challenge' } } };
+        const sets = { 'done-ok': [good, good], 'done-part': [good, bad], 'done-fail': [bad, bad], 'done-challenge': [chal, chal] };
         if (!sets[scenario]) return null;
         return summarize({ results: sets[scenario], booking, shot: { driftMs: 42, spreadMs: 1, atTrueMs: Date.now() } });
       }
@@ -126,6 +141,12 @@
           query: async () => [{ id: 1 }],
           sendMessage: (_tabId, msg, cb) => {
             if (msg && msg.type === 'SET_CLOCK') return void cb({ ok: true, offsetMs: usableOffset(msg.sync) });
+            // Кнопка второго шанса: в предпросмотре ничего не отправляем, просто
+            // показываем, что панель после нажатия перестаёт звать нажимать.
+            if (msg && msg.type === 'SECOND_CHANCE') {
+              previewSecondFired = true;
+              return void cb({ ok: true, started: true });
+            }
             if (msg && msg.type === 'ARM_SHOT') {
               shootAt({
                 localTargetMs: msg.targetMs,
@@ -210,6 +231,20 @@
               outcome: previewOutcome(scenario, booking) || (previewShot ? previewShot.outcome : null),
               report: previewOutcome(scenario, booking) ? { at: now, sent: true, ok: true } : null,
               armedFor: null,
+              secondChance:
+                scenario === 'done-challenge'
+                  ? {
+                      waiting: !previewSecondFired,
+                      used: previewSecondFired,
+                      pending: 2,
+                      since: now - 5000,
+                      firedAt: previewSecondFired ? now : null,
+                      text: previewSecondFired
+                        ? 'Отправляю заявку заново…'
+                        : 'Сайт просит проверку «я не робот». Пройдите её на странице — заявку отправлю сразу же.',
+                      leftMs: 10 * 60 * 1000 - 5000,
+                    }
+                  : { waiting: false, used: false, pending: 0, since: null, firedAt: null, text: '', leftMs: null },
             };
             state.readiness = readiness(state);
             cb({ ok: true, state });

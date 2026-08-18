@@ -15,6 +15,15 @@
     <!-- Главное и единственное, что человек обязан прочитать: что делать прямо сейчас. -->
     <div id="status" class="status status-wait">Открываю страницу подачи…</div>
 
+    <!-- Появляется, только если сайт попросил проверку в момент отправки. Единственная
+         кнопка панели, которая что-то отправляет, — и та лишь дублирует то, что
+         расширение сделает само, как только человек пройдёт проверку. -->
+    <div id="second" class="second">
+      <div id="second-text" class="second-text">—</div>
+      <button id="second-btn" class="second-btn" type="button">Отправить заявку сейчас</button>
+      <div id="second-note" class="second-note"></div>
+    </div>
+
     <!-- Что уйдёт в полночь — одной фразой, без внутренностей запроса. -->
     <div id="plan" class="plan">
       <div id="plan-text" class="plan-text">—</div>

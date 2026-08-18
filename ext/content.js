@@ -224,6 +224,118 @@ function liveSend(index) {
   });
 }
 
+// ——— Второй шанс: проверка на робота ПРИ ОТПРАВКЕ ————————————————
+//
+// Живая проверка 18.08.2026 показала: Cloudflare просит проверку не только при открытии
+// страницы, но и в момент самой ОТПРАВКИ. Заявка тогда не отклонена сайтом — она до него
+// не дошла, и ночь ещё можно спасти: дата держится десятки секунд, а человек сидит перед
+// этой же вкладкой.
+//
+// Рамки жёсткие, иначе это выродится в долбёжку (за неё сайт отвечал `429` в ночь 07.08):
+//   — второй шанс даётся РОВНО ОДИН раз за ночь;
+//   — только по действию ЧЕЛОВЕКА: виджет выдал новый токен либо нажата кнопка в панели.
+//     Саму проверку расширение по-прежнему не проходит и не обходит;
+//   — только пока дата может быть жива, дальше смысла нет.
+var SECOND_CHANCE_WINDOW_MS = 10 * 60 * 1000;
+
+const secondChance = {
+  waiting: false, // ждём человека
+  used: false, // шанс уже потрачен
+  indexes: [], // места, по которым заявка не прошла
+  since: null,
+  renewalsAtShot: 0, // сколько раз виджет обновлял токен на момент отказа
+  booking: null,
+  firedAt: null,
+  text: '',
+};
+
+// Значок расширения — единственный способ докричаться до человека, у которого панель
+// закрыта. Прав на уведомления мы намеренно не просим, а значок доступен без единого
+// разрешения: он есть у любого расширения с кнопкой.
+function setBadge(kind) {
+  try {
+    chrome.runtime.sendMessage({ type: 'SET_BADGE', kind }, () => void chrome.runtime.lastError);
+  } catch (e) {
+    /* фоновый скрипт спит или расширение перезагружают — значок не стоит ничьей ночи */
+  }
+}
+
+// Открыть второй шанс, если по итогам залпа есть что доподать.
+function openSecondChance(report, booking) {
+  const need = (report.outcome && report.outcome.needsHuman) || [];
+  if (!need.length || secondChance.used) {
+    setBadge(report.outcome && report.outcome.ok ? 'ok' : need.length ? 'alert' : 'clear');
+    return;
+  }
+  secondChance.waiting = true;
+  secondChance.indexes = need.slice();
+  secondChance.since = Date.now();
+  secondChance.renewalsAtShot = guardState.renewals;
+  secondChance.booking = booking;
+  secondChance.text = 'Сайт просит проверку «я не робот». Пройдите её на странице — заявку отправлю сразу же.';
+  setBadge('alert');
+}
+
+// Пересчитать итог после доподачи и разослать его заново: панель читает состояние раз в
+// секунду, а в Telegram уходит уже настоящий финал ночи, а не промежуточный отказ.
+function refreshOutcome() {
+  if (!lastShot) return;
+  lastShot.outcome = summarize({ results: lastShot.results, booking: secondChance.booking, shot: lastShot });
+  deliverReport(lastShot, secondChance.booking);
+  setBadge(lastShot.outcome.ok ? 'ok' : (lastShot.outcome.needsHuman || []).length ? 'alert' : 'clear');
+}
+
+// Сама доподача. Ни одного повтора «на всякий случай»: сюда попадают только те места,
+// по которым сайт потребовал проверку, и только по живому действию человека.
+function fireSecondChance(trigger) {
+  if (!secondChance.waiting) return Promise.resolve({ ok: false, error: 'второго шанса сейчас нет' });
+  if (secondChance.used) return Promise.resolve({ ok: false, error: 'второй шанс уже использован' });
+  if (Date.now() - secondChance.since > SECOND_CHANCE_WINDOW_MS) {
+    secondChance.waiting = false;
+    return Promise.resolve({ ok: false, error: 'слишком поздно — дату уже разобрали' });
+  }
+  if (!guardState.token) return Promise.resolve({ ok: false, error: 'проверка ещё не пройдена' });
+
+  secondChance.used = true;
+  secondChance.waiting = false;
+  secondChance.firedAt = Date.now();
+  secondChance.text = 'Отправляю заявку заново…';
+
+  const jobs = secondChance.indexes.map((i) =>
+    Promise.resolve(liveSend(i)).then(
+      (r) => ({ ok: true, i, result: r }),
+      (e) => ({ ok: false, i, error: String(e && e.message ? e.message : e) }),
+    ),
+  );
+  return Promise.all(jobs).then((again) => {
+    // Подменяем в отчёте залпа записи ровно тех мест, которые переподавали.
+    for (const a of again) {
+      const at = lastShot.results.findIndex((r) => r.i === a.i);
+      if (at >= 0) lastShot.results[at] = a;
+    }
+    lastShot.secondChance = { at: secondChance.firedAt, trigger, indexes: secondChance.indexes.slice() };
+    refreshOutcome();
+    secondChance.text = lastShot.outcome.text;
+    return { ok: true, outcome: lastShot.outcome };
+  });
+}
+
+// Человек прошёл проверку — виджет выдал НОВЫЙ токен. Это и есть сигнал к доподаче:
+// расширение не решает за человека, оно замечает, что человек уже сделал своё.
+function maybeSecondChance() {
+  if (!secondChance.waiting || secondChance.used) return;
+  if (Date.now() - secondChance.since > SECOND_CHANCE_WINDOW_MS) {
+    secondChance.waiting = false;
+    secondChance.text = 'Проверку так и не прошли — заявка не ушла.';
+    return;
+  }
+  if (!guardState.token) return;
+  if (guardState.renewals <= secondChance.renewalsAtShot) return;
+  fireSecondChance('token');
+}
+
+setInterval(maybeSecondChance, 500);
+
 // Отчёт о ночи фоновому скрипту, а он — нашему серверу (ext-6). Вторичен по отношению
 // к подаче: вызывается ПОСЛЕ залпа, ничего не ждёт и не умеет сорвать заявку. Даже если
 // интернет отвалился или сервер лежит, здесь всё закончится записью в lastReport.
@@ -306,6 +418,8 @@ function armShot(targetMs, count) {
     lastShot = report;
     armedFor = null;
     deliverReport(report, bookingAtArm);
+    // Сайт мог потребовать проверку прямо на отправке — тогда ночь ещё не проиграна.
+    openSecondChance(report, bookingAtArm);
   });
 
   return { ok: true, localTargetMs: local, inMs: local - Date.now() };
@@ -382,6 +496,17 @@ function readState() {
     outcome: lastShot ? lastShot.outcome || null : null,
     report: lastReport,
     armedFor,
+    // Второй шанс: панель по нему рисует просьбу и кнопку. Смысл поля — «человек ещё
+    // может спасти ночь», а не «что-то сломалось».
+    secondChance: {
+      waiting: secondChance.waiting,
+      used: secondChance.used,
+      pending: secondChance.indexes.length,
+      since: secondChance.since,
+      firedAt: secondChance.firedAt,
+      text: secondChance.text,
+      leftMs: secondChance.since == null ? null : Math.max(0, secondChance.since + SECOND_CHANCE_WINDOW_MS - Date.now()),
+    },
   };
   state.readiness = readiness(state);
   return state;
@@ -412,6 +537,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       sendResponse({ ok: true, offsetMs: clockState.offsetMs });
     } else if (msg && msg.type === 'ARM_SHOT') {
       sendResponse({ ok: true, armed: armShot(msg.targetMs, msg.count) });
+    } else if (msg && msg.type === 'SECOND_CHANCE') {
+      // Кнопка в панели. Отвечаем сразу, не дожидаясь сайта: панель всплывающая и
+      // закроется раньше ответа, а итог человек увидит следующим же опросом.
+      fireSecondChance('button');
+      sendResponse({ ok: true, started: secondChance.used });
     }
   } catch (e) {
     sendResponse({ ok: false, error: String(e && e.message ? e.message : e) });

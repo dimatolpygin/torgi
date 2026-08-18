@@ -301,3 +301,37 @@ body {
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Второй шанс: сайт попросил проверку прямо на отправке. Единственный блок панели,
+   который зовёт что-то нажать, — поэтому он и выглядит громче остальных. */
+.second {
+  display: none;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 2px solid #e08b00;
+  border-radius: 8px;
+  background: #fff8e6;
+}
+.second-text {
+  font-size: 14px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: #7a4a00;
+}
+.second-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  background: #e08b00;
+  cursor: pointer;
+}
+.second-note {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}

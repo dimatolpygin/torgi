@@ -19,6 +19,26 @@ var FIELD_REASONS = {
   length: 'сайт счёл поле слишком коротким',
 };
 
+// Приметы того, что вместо ответа сайта пришла проверка на робота. Ночь 04.08 показала
+// это в первый раз (не-JSON вместо ответа), а живая проверка 18.08 — что Cloudflare
+// просит проверку ИМЕННО В МОМЕНТ ОТПРАВКИ, а не только при открытии страницы. Разница
+// принципиальная: тут человек ещё может спасти ночь, если пройдёт проверку сразу.
+var CHALLENGE_BODY_RE = /challenges\.cloudflare\.com|cf[-_]?chl|cf-turnstile|turnstile|just a moment|checking your browser|enable javascript and cookies|проверка на робота|подтвердите, что вы человек/i;
+
+function looksLikeChallenge(input) {
+  const r = input || {};
+  const h = r.headers || {};
+  const text = String(r.text == null ? '' : r.text);
+  const status = r.status == null ? null : Number(r.status);
+  // Cloudflare сам признаётся заголовком — самый надёжный признак.
+  if (String(h['cf-mitigated'] || '').trim()) return true;
+  if (CHALLENGE_BODY_RE.test(text.slice(0, 4000))) return true;
+  // 403/503 страницей (или вовсе пустым телом) — так отвечают на запрос без пропуска.
+  const html = /^\s*<(?:!doctype|html)/i.test(text.slice(0, 200));
+  if ((status === 403 || status === 503) && (html || !text.trim())) return true;
+  return false;
+}
+
 // Разбор ОДНОГО ответа. На вход — то, что вернула отправка:
 //   { status, text }  — HTTP-статус и тело (боевая отправка, ext-5);
 //   { dryRun: true }  — тренировка (сейчас);
@@ -32,7 +52,12 @@ function readAnswer(item) {
   if (r.dryRun) return { accepted: false, kind: 'drill', reason: 'тренировка — ничего не отправлялось' };
   // Заявку осознанно не отправили (нет токена, подача идёт в другой вкладке). Это не
   // отказ сайта и не сбой — человеку важно видеть разницу.
-  if (r.skipped) return { accepted: false, kind: 'skipped', reason: String(r.skipped) };
+  if (r.skipped) {
+    const why = String(r.skipped);
+    // Не отправили из-за непройденной проверки — единственный «пропуск», который человек
+    // ещё может исправить руками: пройти проверку, и заявка уйдёт вторым шансом.
+    return { accepted: false, kind: 'skipped', reason: why, needsHuman: /проверк/i.test(why) };
+  }
   // Запрос ушёл, но ответа нет: обрыв, таймаут, отвалившийся интернет.
   if (r.networkError) return { accepted: false, kind: 'network', reason: `не отправилось (${r.networkError})` };
 
@@ -41,6 +66,19 @@ function readAnswer(item) {
   // но если сайт всё же ответит так, человек должен это увидеть словами, а не кодом.
   if (http === 429) return { accepted: false, kind: 'ratelimit', http, reason: 'сайт ограничил частоту запросов (429)' };
 
+  const challengeAnswer = () => ({
+    accepted: false,
+    kind: 'challenge',
+    http,
+    // Ночь можно спасти руками: заявка до сайта не дошла, дата ещё может быть жива.
+    needsHuman: true,
+    reason: 'сайт потребовал проверку «я не робот» прямо при отправке',
+    raw: String(r.text == null ? '' : r.text).slice(0, 200).replace(/\s+/g, ' '),
+  });
+
+  // Заголовок Cloudflare — признание защиты, ему верим сразу и телу не доверяем.
+  if (String((r.headers || {})['cf-mitigated'] || '').trim()) return challengeAnswer();
+
   let parsed = null;
   try {
     parsed = JSON.parse(String(r.text == null ? '' : r.text));
@@ -48,6 +86,10 @@ function readAnswer(item) {
     parsed = null;
   }
   if (!parsed || typeof parsed !== 'object') {
+    // Разбираем ПОСЛЕ попытки прочитать JSON: сайт умеет ругаться на само поле токена
+    // (`{"code":"500","cf-turnstile-response":"empty"}`), и такой ответ — не страница
+    // проверки, а честный отказ. Порядок здесь важнее самих примет.
+    if (looksLikeChallenge(r)) return challengeAnswer();
     return {
       accepted: false,
       kind: 'notjson',
@@ -67,12 +109,16 @@ function readAnswer(item) {
     if (typeof parsed[k] === 'string' && parsed[k] !== '') fields[k] = parsed[k];
   }
   const named = Object.keys(fields).map((k) => FIELD_REASONS[fields[k]] || `${k}=${fields[k]}`);
+  // Сайт отклонил заявку из-за самого поля проверки — значит, токена ему не хватило.
+  // Это тоже чинится человеком за минуту, а не «сайт отказал, ночь кончилась».
+  const tokenField = Object.keys(fields).some((k) => /turnstile|captcha|challenge/i.test(k));
   return {
     accepted: false,
     kind: 'rejected',
     http,
     code,
     fields,
+    needsHuman: tokenField,
     // Сайт умеет отказывать молча (code=500 без единого поля) — так и говорим,
     // вместо того чтобы выдумывать причину.
     reason: named.length ? named.join('; ') : `сайт отклонил заявку и причину не назвал (код ${code || '—'})`,
@@ -108,6 +154,10 @@ function summarize(input) {
     spreadMs: o.shot && o.shot.spreadMs != null ? o.shot.spreadMs : null,
     atTrueMs: o.shot && o.shot.atTrueMs != null ? o.shot.atTrueMs : null,
   };
+  // Места, по которым ночь ещё можно спасти руками: сайт попросил проверку при отправке
+  // либо мы не отправили из-за непройденной проверки. Индекс = номер места в залпе.
+  out.needsHuman = answers.map((a, i) => (a.needsHuman ? i : -1)).filter((i) => i >= 0);
+  out.challenged = answers.some((a) => a.kind === 'challenge');
   out.text = describeOutcome(out);
   return out;
 }
@@ -126,6 +176,14 @@ function describeOutcome(o) {
   const when = o.booking ? formatDateRu(o.booking) : 'нужную дату';
   if (o.drill) return `Тренировка: ${o.count} ${placesWordExt(o.count)} собрано, на сайт ничего не ушло`;
   if (o.ok) return `Принято ${o.acceptedCount} из ${o.count} — ${o.acceptedCount} ${placesWordExt(o.acceptedCount)} на ${when}`;
+  // Проверка при отправке — единственный отказ, который человек может отменить сам.
+  // Поэтому здесь не «заявку не приняли», а прямое указание, что делать сию секунду.
+  // Идёт ПЕРЕД разбором частичного успеха: важнее не итог, а действие.
+  if (o.needsHuman && o.needsHuman.length) {
+    const left = o.needsHuman.length;
+    const got = o.acceptedCount ? `Принято ${o.acceptedCount} из ${o.count} на ${when}. ` : '';
+    return `${got}Сайт просит проверку «я не робот»: не подано ${left} ${placesWordExt(left)}. Пройдите проверку на странице — заявка уйдёт сама.`;
+  }
   if (o.partial) return `Принято ${o.acceptedCount} из ${o.count} на ${when}. Отказ по остальным: ${o.reasons.join('; ')}`;
   return `Не принято ни одной заявки на ${when}. Причина: ${o.reasons.join('; ') || 'сайт промолчал'}`;
 }
@@ -146,6 +204,10 @@ function reportBody(input) {
     count: out.count || 0,
     acceptedCount: out.acceptedCount || 0,
     ok: !!out.ok,
+    // Отдельным полем, а не только словами: по нему видно, что ночь сорвала защита,
+    // а не сайт и не мы. Токена в отчёте по-прежнему нет — только факт.
+    challenged: !!out.challenged,
+    pendingCount: (out.needsHuman || []).length,
     reasons: out.reasons || [],
     shot: { driftMs: out.driftMs, spreadMs: out.spreadMs, atTrueMs: out.atTrueMs },
     text: out.text || '',
@@ -153,5 +215,5 @@ function reportBody(input) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { ACCEPT_CODES, FIELD_REASONS, readAnswer, summarize, describeOutcome, reportBody, placesWordExt };
+  module.exports = { ACCEPT_CODES, FIELD_REASONS, CHALLENGE_BODY_RE, looksLikeChallenge, readAnswer, summarize, describeOutcome, reportBody, placesWordExt };
 }
